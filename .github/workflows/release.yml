@@ -104,3 +104,29 @@ jobs:
             Vellum. See `scripts/publish-vellum-testing.sh` and
             `docs/DEVELOPMENT.md` for the maintainer-reviewed process to
             propose it to vellum-dev/vellum.
+
+  mirror-public-release:
+    name: Mirror public distribution release
+    needs: publish-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: remarkable-calendar-notes-armv7
+          path: dist
+
+      - name: Create/update public binary release
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          repo="astafan8/remarkable-calendar-notes-releases"
+          if gh release view "$TAG" --repo "$repo" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --repo "$repo" --clobber
+          else
+            gh release create "$TAG" dist/* \
+              --repo "$repo" \
+              --title "$TAG" \
+              --notes "Experimental reMarkable 2 AppLoad bundle. Requires reMarkable OS 3.26-3.27, XOVI, and AppLoad 0.5.3 or newer."
+          fi

@@ -85,7 +85,7 @@ if [ "${OPEN_PR:-0}" = "1" ] && command -v gh >/dev/null 2>&1; then
   (cd "$WORKDIR" && gh pr create \
     --repo vellum-dev/vellum \
     --title "Add remarkable-calendar-notes" \
-    --body "Adds the remarkable-calendar-notes AppLoad calendar/notes app (reMarkable 2 only). See https://github.com/astafan8/remarkable-calendar-notes for source, docs, and CI. Requesting maintainer review before any testing-repo publication.")
+    --body "Adds the remarkable-calendar-notes AppLoad calendar/notes app (reMarkable 2 only). Public installable artifacts and license: https://github.com/astafan8/remarkable-calendar-notes-releases. Requesting maintainer review before any testing-repo publication.")
 else
   echo "==> Branch pushed. Open a PR manually at:"
   echo "    https://github.com/vellum-dev/vellum/compare/main...$(basename "$(dirname "$VELLUM_FORK_URL")")-fork:$BRANCH?expand=1"

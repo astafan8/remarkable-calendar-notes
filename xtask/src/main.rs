@@ -303,6 +303,10 @@ mod packaging_tests {
             text.contains(&format!("/releases/download/v$pkgver/{templated}")),
             "source= must point at the release asset for v$pkgver"
         );
+        assert!(
+            text.contains("remarkable-calendar-notes-releases"),
+            "Vellum must fetch from the public binary distribution repository"
+        );
 
         let workflow =
             fs::read_to_string(repo_root().join(".github/workflows/release.yml")).unwrap();
@@ -333,6 +337,8 @@ mod packaging_tests {
         for glob in ["dist/*.zip", "dist/*.sha256", "dist/*.sha512"] {
             assert!(workflow.contains(glob), "release.yml must upload {glob}");
         }
+        assert!(workflow.contains("remarkable-calendar-notes-releases"));
+        assert!(workflow.contains("secrets.PUBLIC_RELEASE_TOKEN"));
     }
 
     #[test]

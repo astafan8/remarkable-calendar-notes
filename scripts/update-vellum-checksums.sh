@@ -19,7 +19,8 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 VELBUILD="vellum/packages/remarkable-calendar-notes/VELBUILD"
 PKGVER="${1:-$(sed -n 's/^pkgver=//p' "$VELBUILD")}"
 UPSTREAM="$(sed -n 's/^upstream_author=//p' "$VELBUILD" | tr -d '"')"
-BASE="https://github.com/${UPSTREAM}/remarkable-calendar-notes"
+DIST_REPO="remarkable-calendar-notes-releases"
+BASE="https://github.com/${UPSTREAM}/${DIST_REPO}"
 
 ZIP="remarkable-calendar-notes-${PKGVER}-armv7.zip"
 WORK="$(mktemp -d)"
@@ -27,7 +28,7 @@ trap 'rm -rf "$WORK"' EXIT
 
 echo "==> Downloading release assets for v${PKGVER}"
 curl -fsSL -o "$WORK/$ZIP" "${BASE}/releases/download/v${PKGVER}/${ZIP}"
-curl -fsSL -o "$WORK/LICENSE" "https://raw.githubusercontent.com/${UPSTREAM}/remarkable-calendar-notes/v${PKGVER}/LICENSE"
+curl -fsSL -o "$WORK/LICENSE" "https://raw.githubusercontent.com/${UPSTREAM}/${DIST_REPO}/v${PKGVER}/LICENSE"
 
 ZIP_SUM="$(sha512sum "$WORK/$ZIP" | cut -d' ' -f1)"
 LICENSE_SUM="$(sha512sum "$WORK/LICENSE" | cut -d' ' -f1)"

@@ -37,9 +37,11 @@ Requires reMarkable OS **3.26–3.27.x** (see
 > release bundle below.
 
 Today: download the `remarkable-calendar-notes-<version>-armv7.zip`
-release bundle, verify its checksum, and copy it into AppLoad's app
-directory — full steps in [docs/INSTALL.md](docs/INSTALL.md). Launch it
-from **AppLoad**, which is the only supported launcher (see
+bundle from the public
+[release repository](https://github.com/astafan8/remarkable-calendar-notes-releases/releases),
+verify its checksum, and copy it into AppLoad's app directory — full
+steps in [docs/INSTALL.md](docs/INSTALL.md). Launch it from **AppLoad**,
+which is the only supported launcher (see
 [docs/LIMITATIONS.md](docs/LIMITATIONS.md) on why a dedicated xochitl
 sidebar icon is not offered).
 
