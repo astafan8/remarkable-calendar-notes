@@ -51,6 +51,7 @@ jobs:
           chmod 755 dist/stage/remarkable-calendar-notes/remarkable-calendar-notes
 
       - name: Package AppLoad bundle
+        shell: bash
         run: |
           set -euo pipefail
           version="${{ steps.version.outputs.version }}"

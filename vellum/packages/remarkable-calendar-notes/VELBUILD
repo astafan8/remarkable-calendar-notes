@@ -1,7 +1,7 @@
 maintainer="astafan8 <astafan8@users.noreply.github.com>"
 status="experimental"
 pkgname=remarkable-calendar-notes
-pkgver=0.1.1
+pkgver=0.1.2
 pkgrel=0
 upstream_author="astafan8"
 category="apps"
@@ -64,6 +64,6 @@ predeinstall() {
 # assets named in source= above. This repository's own checks validate the
 # recipe's *shape* and refuse to treat placeholders as valid.
 sha512sums="
-PLACEHOLDER-RUN-scripts/update-vellum-checksums.sh  remarkable-calendar-notes-0.1.1-armv7.zip
+PLACEHOLDER-RUN-scripts/update-vellum-checksums.sh  remarkable-calendar-notes-0.1.2-armv7.zip
 PLACEHOLDER-RUN-scripts/update-vellum-checksums.sh  LICENSE
 "
