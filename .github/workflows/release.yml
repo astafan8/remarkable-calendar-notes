@@ -41,6 +41,7 @@ jobs:
         run: |
           set -euo pipefail
           . /opt/x-tools/switch-arm.sh
+          export CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER="${CROSS_COMPILE}gcc"
           cargo build --release -p calnotes-app --target "$CARGO_BUILD_TARGET"
           "${CROSS_COMPILE}strip" "target/$CARGO_BUILD_TARGET/release/remarkable-calendar-notes"
           mkdir -p dist/stage/remarkable-calendar-notes
