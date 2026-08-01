@@ -1,0 +1,15 @@
+# Force LF line endings for shell scripts regardless of the checkout
+# platform's line-ending settings — a CRLF shebang line breaks bash on
+# Linux (CI, the toltec-dev release container, and the device itself).
+*.sh text eol=lf
+# VELBUILD recipes are shell scripts sourced by Vellum's Linux build
+# tooling, and have no extension to match above.
+VELBUILD text eol=lf
+Cargo.lock text eol=lf linguist-generated=true
+*.rs text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+assets/icon.png binary

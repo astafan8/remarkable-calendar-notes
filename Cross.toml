@@ -1,0 +1,11 @@
+# Configuration for `cross` (https://github.com/cross-rs/cross), used for
+# local cross-compilation to the reMarkable 2 (armv7, glibc, hard-float).
+#
+# CI does not use `cross`; the release workflow builds directly inside the
+# `ghcr.io/toltec-dev/rust:v4.0` container, which already ships the correct
+# arm-linux-gnueabihf toolchain and glibc version for reMarkable OS.
+[target.armv7-unknown-linux-gnueabihf]
+image = "ghcr.io/toltec-dev/rust:v4.0"
+
+[build]
+default-target = "armv7-unknown-linux-gnueabihf"

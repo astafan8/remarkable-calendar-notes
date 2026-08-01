@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Fills in the sha512sums of vellum/packages/remarkable-calendar-notes/VELBUILD
+# from a published GitHub Release of this repository.
+#
+# The VELBUILD ships explicit `PLACEHOLDER-...` markers rather than
+# zeroed-out or invented digests, so nothing can mistake an unreleased
+# recipe for a verified one. This script is the only supported way to turn
+# those markers into real checksums, and it does so from exactly the URLs
+# the recipe's `source=` lists.
+#
+# Usage:
+#   scripts/update-vellum-checksums.sh [version]
+#
+# `version` defaults to the pkgver in the VELBUILD. Requires curl,
+# sha512sum (coreutils), and awk — no Python or Docker.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+VELBUILD="vellum/packages/remarkable-calendar-notes/VELBUILD"
+PKGVER="${1:-$(sed -n 's/^pkgver=//p' "$VELBUILD")}"
+UPSTREAM="$(sed -n 's/^upstream_author=//p' "$VELBUILD" | tr -d '"')"
+BASE="https://github.com/${UPSTREAM}/remarkable-calendar-notes"
+
+ZIP="remarkable-calendar-notes-${PKGVER}-armv7.zip"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+echo "==> Downloading release assets for v${PKGVER}"
+curl -fsSL -o "$WORK/$ZIP" "${BASE}/releases/download/v${PKGVER}/${ZIP}"
+curl -fsSL -o "$WORK/LICENSE" "https://raw.githubusercontent.com/${UPSTREAM}/remarkable-calendar-notes/v${PKGVER}/LICENSE"
+
+ZIP_SUM="$(sha512sum "$WORK/$ZIP" | cut -d' ' -f1)"
+LICENSE_SUM="$(sha512sum "$WORK/LICENSE" | cut -d' ' -f1)"
+
+echo "==> Rewriting $VELBUILD sha512sums"
+awk -v zip_name="$ZIP" -v zip_sum="$ZIP_SUM" -v lic_sum="$LICENSE_SUM" '
+  /^sha512sums="/ {
+    print "sha512sums=\"";
+    print zip_sum "  " zip_name;
+    print lic_sum "  LICENSE";
+    in_block = 1;
+    next
+  }
+  in_block && /^"$/ { print "\""; in_block = 0; next }
+  in_block { next }
+  { print }
+' "$VELBUILD" > "$VELBUILD.tmp"
+
+if grep -q 'PLACEHOLDER-' "$VELBUILD.tmp"; then
+  rm -f "$VELBUILD.tmp"
+  echo "error: failed to replace the sha512sums block; $VELBUILD left unchanged" >&2
+  exit 1
+fi
+mv "$VELBUILD.tmp" "$VELBUILD"
+
+echo "==> Done. Verify with:"
+echo "    grep -A3 '^sha512sums=' $VELBUILD"
+echo "Only after this step is the recipe buildable by Vellum's own tooling."

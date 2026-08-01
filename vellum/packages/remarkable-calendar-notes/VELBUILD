@@ -1,0 +1,69 @@
+maintainer="astafan8 <astafan8@users.noreply.github.com>"
+status="experimental"
+pkgname=remarkable-calendar-notes
+pkgver=0.1.0
+pkgrel=0
+upstream_author="astafan8"
+category="apps"
+pkgdesc="Read-only calendar (Day/Week/Work Week/Two Weeks/Month) with persistent handwritten notes per date, via AppLoad"
+url="https://github.com/astafan8/remarkable-calendar-notes"
+arch="armv7"
+license="MIT"
+# reMarkable 2 only. Vellum's device gating is expressed as exclusions of
+# the devices this package must not install on, alongside its real
+# dependencies: this app is built for RM2's 32-bit armv7 userspace and its
+# 1404x1872 QTFB framebuffer, and is not built or tested for the
+# reMarkable 1, Paper Pro, Paper Pro Move, or Paper Pure.
+depends="appload>=0.5.3 remarkable-os>=3.26 remarkable-os<3.28 !rm1 !rmpp !rmppm !rmppure"
+readmeurl="https://raw.githubusercontent.com/$upstream_author/remarkable-calendar-notes/v$pkgver/README.md"
+source="
+https://github.com/$upstream_author/remarkable-calendar-notes/releases/download/v$pkgver/remarkable-calendar-notes-$pkgver-armv7.zip
+https://raw.githubusercontent.com/$upstream_author/remarkable-calendar-notes/v$pkgver/LICENSE
+"
+options="!check !fhs"
+
+unpack() {
+	unzip -o "$srcdir"/remarkable-calendar-notes-$pkgver-armv7.zip -d "$srcdir"
+}
+
+package() {
+	install -Dm755 "$srcdir"/remarkable-calendar-notes/remarkable-calendar-notes \
+		"$pkgdir"/home/root/xovi/exthome/appload/remarkable-calendar-notes/remarkable-calendar-notes
+	install -Dm644 "$srcdir"/remarkable-calendar-notes/icon.png \
+		"$pkgdir"/home/root/xovi/exthome/appload/remarkable-calendar-notes/icon.png
+	install -Dm644 "$srcdir"/remarkable-calendar-notes/external.manifest.json \
+		"$pkgdir"/home/root/xovi/exthome/appload/remarkable-calendar-notes/external.manifest.json
+
+	install -Dm644 "$srcdir"/LICENSE \
+		"$pkgdir"/home/root/.vellum/licenses/$pkgname/LICENSE
+	echo "https://github.com/$upstream_author/remarkable-calendar-notes" > \
+		"$pkgdir"/home/root/.vellum/licenses/$pkgname/SOURCES
+}
+
+predeinstall() {
+	# User data (config, ink notes, offline cache) lives under
+	# /home/root/.local/share/remarkable-calendar-notes and is preserved on
+	# a plain `vellum del`; only `vellum purge` removes it.
+	if [ "$VELLUM_PURGE" = "1" ]; then
+		rm -rf /home/root/.local/share/remarkable-calendar-notes
+	fi
+}
+
+# CHECKSUM PLACEHOLDERS — this recipe is not buildable as it stands.
+#
+# The values below are deliberately *not* checksum-shaped: they cannot be
+# mistaken for real digests, and any tool that tries to verify them fails
+# loudly instead of silently accepting a plausible-looking wrong hash.
+# (Alpine's abuild — which Vellum's VELBUILD format follows — has no
+# "SKIP" escape hatch for sha512sums, so a marker string is the honest
+# option.)
+#
+# Before this package is proposed to vellum-dev/vellum, run
+# scripts/update-vellum-checksums.sh against a published GitHub Release;
+# it replaces these markers with the real sha512 digests of exactly the
+# assets named in source= above. This repository's own checks validate the
+# recipe's *shape* and refuse to treat placeholders as valid.
+sha512sums="
+PLACEHOLDER-RUN-scripts/update-vellum-checksums.sh  remarkable-calendar-notes-0.1.0-armv7.zip
+PLACEHOLDER-RUN-scripts/update-vellum-checksums.sh  LICENSE
+"

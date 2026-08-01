@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/calnotes-core",
+    "crates/calnotes-device",
+    "crates/calnotes-app",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["remarkable-calendar-notes contributors"]
+repository = "https://github.com/astafan8/remarkable-calendar-notes"
+rust-version = "1.75"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+panic = "abort"
+codegen-units = 1

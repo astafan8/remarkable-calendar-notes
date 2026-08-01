@@ -1,0 +1,221 @@
+//! The display sink: how rendered pixels reach the screen.
+//!
+//! The on-device implementation is QTFB's shared memory plus its
+//! update-request messages, but nothing here depends on that — the logic
+//! that decides *what* to copy and *which* rectangle to refresh is
+//! platform-independent and unit-tested on every host. `main.rs`'s
+//! Unix-only device loop supplies a thin [`FrameSink`] adapter over
+//! `calnotes_device::qtfb::QtfbClient`; tests supply a plain byte buffer.
+//!
+//! This split is what keeps the incremental pen path honest: the
+//! assertion that a pen sample touches only a small dirty rectangle (and
+//! never re-renders or re-copies the full 1404x1872 framebuffer) is a
+//! real test, not a comment.
+//!
+//! Only `main.rs`'s Unix-only `device_loop` calls into this module in a
+//! normal build, so a non-Unix host build legitimately sees it as unused;
+//! `#[cfg(test)]` already covers it during `cargo test` on any platform.
+#![cfg_attr(not(unix), allow(dead_code))]
+
+use crate::app::{App, PenSegment};
+use calnotes_core::render::{FrameBuffer, BLACK};
+use calnotes_core::view::Rect;
+use std::io;
+
+/// A destination for rendered pixels: a full-frame RGB565 little-endian
+/// buffer plus the ability to ask for a full or partial screen refresh.
+pub trait FrameSink {
+    fn pixels(&mut self) -> &mut [u8];
+    fn request_full_update(&mut self) -> io::Result<()>;
+    fn request_partial_update(&mut self, rect: Rect) -> io::Result<()>;
+}
+
+/// Full redraw: re-render the current screen into `fb` (reusing its
+/// allocation), publish every pixel, and refresh the whole display.
+///
+/// Used for startup, navigation, view/UI changes, and completed
+/// background refreshes — never for an individual pen sample.
+pub fn redraw<S: FrameSink>(sink: &mut S, app: &App, fb: &mut FrameBuffer) -> io::Result<()> {
+    app.render_into(fb);
+    fb.write_rgb565_into(sink.pixels());
+    sink.request_full_update()
+}
+
+/// Incremental pen update: draw one stroke segment into the framebuffer
+/// that already holds the current screen, publish only the pixels that
+/// segment touched, and refresh only that rectangle.
+///
+/// Returns the refreshed rectangle, or `None` if the segment fell
+/// entirely outside the framebuffer.
+pub fn draw_segment<S: FrameSink>(
+    sink: &mut S,
+    fb: &mut FrameBuffer,
+    segment: PenSegment,
+) -> io::Result<Option<Rect>> {
+    fb.draw_line(
+        segment.x0,
+        segment.y0,
+        segment.x1,
+        segment.y1,
+        BLACK,
+        segment.thickness,
+    );
+    let Some(dirty) = fb.clamp_rect(segment.dirty_rect()) else {
+        return Ok(None);
+    };
+    if fb.write_rect_rgb565_into(sink.pixels(), dirty).is_none() {
+        return Ok(None);
+    }
+    sink.request_partial_update(dirty)?;
+    Ok(Some(dirty))
+}
+
+/// An in-memory [`FrameSink`] used by tests (and available for any
+/// headless harness): it records exactly which updates were requested.
+#[cfg(test)]
+pub struct MemorySink {
+    pub pixels: Vec<u8>,
+    pub full_updates: usize,
+    pub partial_updates: Vec<Rect>,
+}
+
+#[cfg(test)]
+impl MemorySink {
+    pub fn new(width: usize, height: usize) -> Self {
+        MemorySink {
+            pixels: vec![0u8; width * height * 2],
+            full_updates: 0,
+            partial_updates: Vec::new(),
+        }
+    }
+}
+
+#[cfg(test)]
+impl FrameSink for MemorySink {
+    fn pixels(&mut self) -> &mut [u8] {
+        &mut self.pixels
+    }
+
+    fn request_full_update(&mut self) -> io::Result<()> {
+        self.full_updates += 1;
+        Ok(())
+    }
+
+    fn request_partial_update(&mut self, rect: Rect) -> io::Result<()> {
+        self.partial_updates.push(rect);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::{App, CANVAS_H, CANVAS_W};
+    use calnotes_core::model::ViewMode;
+    use calnotes_core::persistence;
+
+    fn with_temp_data_dir<T>(f: impl FnOnce() -> T) -> T {
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var(persistence::DATA_DIR_ENV, dir.path());
+        let result = f();
+        std::env::remove_var(persistence::DATA_DIR_ENV);
+        result
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn a_pen_sample_publishes_only_its_dirty_rect() {
+        with_temp_data_dir(|| {
+            let mut app = App::new().unwrap();
+            app.set_view_mode(ViewMode::Day);
+            let mut fb = FrameBuffer::new(CANVAS_W as usize, CANVAS_H as usize);
+            let mut sink = MemorySink::new(CANVAS_W as usize, CANVAS_H as usize);
+            redraw(&mut sink, &app, &mut fb).unwrap();
+            assert_eq!(sink.full_updates, 1);
+
+            // Everything the full redraw wrote is now the baseline.
+            let baseline = sink.pixels.clone();
+
+            app.pen_down(300, 700, 1.0);
+            let segment = app.pen_move(306, 704, 1.0).unwrap();
+            let dirty = draw_segment(&mut sink, &mut fb, segment)
+                .unwrap()
+                .expect("a dirty rect");
+
+            // Exactly one partial refresh, no extra full refresh.
+            assert_eq!(sink.full_updates, 1);
+            assert_eq!(sink.partial_updates, vec![dirty]);
+
+            // The refreshed region is tiny compared with the screen.
+            let screen_pixels = (CANVAS_W * CANVAS_H) as i64;
+            let dirty_pixels = (dirty.w * dirty.h) as i64;
+            assert!(
+                dirty_pixels * 1000 < screen_pixels,
+                "dirty rect {dirty:?} is not small relative to the screen"
+            );
+
+            // Every byte that changed lies inside the dirty rectangle.
+            for (i, (before, after)) in baseline.iter().zip(sink.pixels.iter()).enumerate() {
+                if before == after {
+                    continue;
+                }
+                let pixel = i / 2;
+                let x = (pixel % CANVAS_W as usize) as i32;
+                let y = (pixel / CANVAS_W as usize) as i32;
+                assert!(
+                    x >= dirty.x && x < dirty.x + dirty.w && y >= dirty.y && y < dirty.y + dirty.h,
+                    "pixel ({x},{y}) changed outside the published rect {dirty:?}"
+                );
+            }
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn incrementally_drawn_ink_matches_a_full_redraw_of_the_same_screen() {
+        with_temp_data_dir(|| {
+            let mut app = App::new().unwrap();
+            app.set_view_mode(ViewMode::Day);
+            let mut fb = FrameBuffer::new(CANVAS_W as usize, CANVAS_H as usize);
+            let mut sink = MemorySink::new(CANVAS_W as usize, CANVAS_H as usize);
+            redraw(&mut sink, &app, &mut fb).unwrap();
+
+            app.pen_down(400, 800, 1.0);
+            for (x, y) in [(420, 815), (450, 790), (470, 830)] {
+                let segment = app.pen_move(x, y, 1.0).unwrap();
+                draw_segment(&mut sink, &mut fb, segment).unwrap();
+            }
+            app.pen_up();
+
+            // What the screen shows now must equal a from-scratch render
+            // of the persisted strokes.
+            let mut reference = FrameBuffer::new(CANVAS_W as usize, CANVAS_H as usize);
+            let mut reference_sink = MemorySink::new(CANVAS_W as usize, CANVAS_H as usize);
+            redraw(&mut reference_sink, &app, &mut reference).unwrap();
+            assert_eq!(sink.pixels, reference_sink.pixels);
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn an_offscreen_segment_requests_no_refresh() {
+        with_temp_data_dir(|| {
+            let mut fb = FrameBuffer::new(CANVAS_W as usize, CANVAS_H as usize);
+            let mut sink = MemorySink::new(CANVAS_W as usize, CANVAS_H as usize);
+            let result = draw_segment(
+                &mut sink,
+                &mut fb,
+                PenSegment {
+                    x0: -50,
+                    y0: -50,
+                    x1: -40,
+                    y1: -40,
+                    thickness: 2,
+                },
+            )
+            .unwrap();
+            assert!(result.is_none());
+            assert!(sink.partial_updates.is_empty());
+        });
+    }
+}

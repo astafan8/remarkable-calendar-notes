@@ -1,0 +1,12 @@
+/target
+/dist
+/vellum/dist
+/vellum/keys
+Cargo.lock.bak
+*.pdb
+.vscode/
+.idea/
+*.ppm
+*.local.json
+.env
+.DS_Store

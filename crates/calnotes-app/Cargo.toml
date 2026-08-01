@@ -1,0 +1,24 @@
+[package]
+name = "calnotes-app"
+description = "remarkable-calendar-notes: read-only calendar with persistent handwritten notes, for reMarkable 2"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "remarkable-calendar-notes"
+path = "src/main.rs"
+
+[dependencies]
+calnotes-core = { path = "../calnotes-core" }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+
+[target.'cfg(unix)'.dependencies]
+calnotes-device = { path = "../calnotes-device" }
+
+[dev-dependencies]
+tempfile = "3"
+serial_test = "3"

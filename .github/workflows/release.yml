@@ -1,0 +1,93 @@
+name: Release
+
+# Cross-builds the armv7 (reMarkable 2) release binary inside the same
+# container image the toltec/vellum ecosystem uses for its own packages,
+# assembles an AppLoad bundle zip + checksums, and publishes them as
+# GitHub Release assets.
+#
+# This workflow does NOT publish to Vellum. Vellum requires a maintainer
+# to review and merge a PR against vellum-dev/vellum before anything is
+# published to their (also maintainer-controlled) testing repository —
+# see scripts/publish-vellum-testing.sh and vellum/packages/*/VELBUILD's
+# `source=` URLs, which point at exactly the assets this workflow produces.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-armv7:
+    name: Build armv7 release binary
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/toltec-dev/rust:v4.0
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine version from tag
+        id: version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cross-build for armv7 (reMarkable 2)
+        shell: bash
+        run: |
+          set -euo pipefail
+          . /opt/x-tools/switch-arm.sh
+          cargo build --release -p calnotes-app --target "$CARGO_BUILD_TARGET"
+          "${CROSS_COMPILE}strip" "target/$CARGO_BUILD_TARGET/release/remarkable-calendar-notes"
+          mkdir -p dist/stage/remarkable-calendar-notes
+          cp "target/$CARGO_BUILD_TARGET/release/remarkable-calendar-notes" dist/stage/remarkable-calendar-notes/
+          cp assets/icon.png dist/stage/remarkable-calendar-notes/
+          cp external.manifest.json dist/stage/remarkable-calendar-notes/
+          chmod 755 dist/stage/remarkable-calendar-notes/remarkable-calendar-notes
+
+      - name: Package AppLoad bundle
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          out="dist/remarkable-calendar-notes-${version}-armv7.zip"
+          (cd dist/stage && zip -r -X "../../$out" remarkable-calendar-notes)
+          sha256sum "$out" > "$out.sha256"
+          sha512sum "$out" > "$out.sha512"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: remarkable-calendar-notes-armv7
+          path: |
+            dist/*.zip
+            dist/*.sha256
+            dist/*.sha512
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: build-armv7
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: remarkable-calendar-notes-armv7
+          path: dist
+
+      - name: Create/update GitHub Release with bundle + checksums
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.zip
+            dist/*.sha256
+            dist/*.sha512
+          generate_release_notes: true
+          body: |
+            Automated armv7 (reMarkable 2) build for AppLoad.
+
+            **Vellum**: this release is not automatically published to
+            Vellum. See `scripts/publish-vellum-testing.sh` and
+            `docs/DEVELOPMENT.md` for the maintainer-reviewed process to
+            propose it to vellum-dev/vellum.
