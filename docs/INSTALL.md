@@ -104,8 +104,8 @@ Google and iCloud setup need additional provider-specific details; see
 
 ## Vellum package status
 
-The app itself is not available through `vellum add`. Vellum maintainers
-require reviewable public source for packages, while this project's
-source repository is private. The checked-in `VELBUILD` is retained for
-future use if that policy mismatch is resolved. For now, use the manual
+The app itself is not yet available through `vellum add`. The source is
+public, but Vellum's maintainers require the repository owner to review,
+clean up, and personally submit the package contribution. Until that PR
+is accepted and published to the testing feed, use the manual
 release-bundle installation above.

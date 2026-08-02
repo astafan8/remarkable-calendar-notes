@@ -10,10 +10,9 @@
 #   - Only after merge do Vellum maintainers publish a package to their
 #     *testing* repository; there is no automatic/self-service path, by
 #     Vellum's own design.
-#   - This script only gets a correctly-formed PR in front of a maintainer.
-#   - Vellum requires the application source to be publicly reviewable.
-#     This repository is private by default, so the script refuses to run
-#     unless the owner explicitly confirms that the source is now public.
+#   - This script prepares and pushes a fork branch. It deliberately does
+#     not open the PR: Vellum requires the repository owner to review the
+#     contribution and personally write/open it.
 #
 # Requirements (all yours to provide — none of this is bundled or assumed):
 #   - A personal GitHub fork of https://github.com/vellum-dev/vellum
@@ -29,22 +28,14 @@
 #     script refuses to commit a recipe that still has placeholders.
 #
 # Usage:
-#   SOURCE_REPOSITORY_PUBLIC=1 \
 #   VELLUM_FORK_URL=git@github.com:<you>/vellum.git \
 #   scripts/publish-vellum-testing.sh
 #
 # Optional:
 #   VELLUM_WORKDIR   local clone location (default: dist/vellum-fork)
 #   VELLUM_BRANCH    branch name (default: add-remarkable-calendar-notes)
-#   OPEN_PR=1        also run `gh pr create` (requires `gh auth login` first)
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-
-: "${SOURCE_REPOSITORY_PUBLIC:?Set SOURCE_REPOSITORY_PUBLIC=1 only after the application source is publicly reviewable}"
-if [ "$SOURCE_REPOSITORY_PUBLIC" != "1" ]; then
-  echo "error: Vellum requires publicly reviewable application source." >&2
-  exit 1
-fi
 
 : "${VELLUM_FORK_URL:?Set VELLUM_FORK_URL to your fork of vellum-dev/vellum, e.g. git@github.com:you/vellum.git}"
 WORKDIR="${VELLUM_WORKDIR:-dist/vellum-fork}"
@@ -91,17 +82,8 @@ git -C "$WORKDIR" commit -m "Add remarkable-calendar-notes AppLoad package"
 git -C "$WORKDIR" push -u origin "$BRANCH"
 
 echo
-if [ "${OPEN_PR:-0}" = "1" ] && command -v gh >/dev/null 2>&1; then
-  echo "==> Opening PR via gh CLI (requires prior 'gh auth login')"
-  (cd "$WORKDIR" && gh pr create \
-    --repo vellum-dev/vellum \
-    --title "Add remarkable-calendar-notes" \
-    --body "Adds the remarkable-calendar-notes AppLoad calendar/notes app (reMarkable 2 only). Public installable artifacts and license: https://github.com/astafan8/remarkable-calendar-notes-releases. Requesting maintainer review before any testing-repo publication.")
-else
-  echo "==> Branch pushed. Open a PR manually at:"
-  echo "    https://github.com/vellum-dev/vellum/compare/main...$(basename "$(dirname "$VELLUM_FORK_URL")")-fork:$BRANCH?expand=1"
-  echo "    (or set OPEN_PR=1 with the gh CLI authenticated to do this automatically)"
-fi
+echo "==> Branch pushed. Review it, then open and describe the PR yourself:"
+echo "    https://github.com/vellum-dev/vellum/compare/main...astafan8:$BRANCH?expand=1"
 
 echo
 echo "A Vellum maintainer must review and merge this PR, then choose to"

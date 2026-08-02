@@ -49,10 +49,11 @@ The complete first-time instructions—including how to find the SSH
 password, install Vellum safely, verify the release checksum, and recover
 after an OS update—are in [docs/INSTALL.md](docs/INSTALL.md).
 
-Vellum maintainers will not accept the package while its source remains
-private, so `vellum add remarkable-calendar-notes` is not currently an
-option. Launching through AppLoad is supported; a dedicated xochitl
-sidebar icon is not (see [docs/LIMITATIONS.md](docs/LIMITATIONS.md)).
+The source is now public, but `vellum add remarkable-calendar-notes` is
+still not available until the repository owner personally reviews and
+submits the package and Vellum's maintainers accept it. Manual AppLoad
+installation remains the current path. A dedicated xochitl sidebar icon
+is not supported (see [docs/LIMITATIONS.md](docs/LIMITATIONS.md)).
 
 ## In-app setup
 

@@ -132,17 +132,15 @@ CI compiles those paths for the real armv7 target (`.github/workflows/ci.yml`),
 which catches type/ABI mistakes but not runtime ones. Treat on-device
 behavior as verified by running it, not by a green CI badge.
 
-## Vellum cannot accept the current private-source package
+## Vellum review is still pending
 
-The public release repository makes binaries downloadable, but Vellum's
-maintainers also require reviewable source so they can inspect and build
-the package. This project's source repository is private, so the app
-cannot currently be accepted into Vellum's testing or stable feed.
+The source and release artifacts are public, but that does not
+automatically place the app in Vellum. Its maintainers require the
+repository owner—not an automation operator—to review the VELBUILD,
+personally open and describe the contribution, and respond to review.
 
-The checked-in VELBUILD and publishing helper are retained for a future
-source-publication decision. Any contribution must be reviewed and
-opened by the repository owner, then accepted by a Vellum maintainer.
-Until then, install the public release bundle manually as described in
+Until that contribution is accepted and published to Vellum's testing
+feed, install the public release bundle manually as described in
 `docs/INSTALL.md`.
 
 ## Network refreshes are best-effort and asynchronous

@@ -81,13 +81,11 @@ Deterministically regenerates `assets/icon.png` from code (see
 2. Tag `vX.Y.Z` and push. `.github/workflows/release.yml` cross-builds
    the armv7 binary inside `ghcr.io/toltec-dev/rust:v4.0`, packages an
    AppLoad bundle zip, attaches it (with SHA-256/512 checksums) to a
-   private-source GitHub Release, and mirrors the artifacts to the public
-   `remarkable-calendar-notes-releases` repository.
+   GitHub Release in the source repository, and mirrors the artifacts to
+   the dedicated `remarkable-calendar-notes-releases` repository.
 3. Fill in the Vellum recipe's checksums from that release with
    `scripts/update-vellum-checksums.sh`.
-4. Do not submit the Vellum recipe while this source repository is
-   private. Vellum requires maintainers to review and build the source,
-   and requires the repository owner—not an automation operator—to open
-   and describe the contribution. If the source is made public later,
-   review/clean the VELBUILD, run Vellum's own lint/build tools, and then
-   use `scripts/publish-vellum-testing.sh`.
+4. Review and clean the VELBUILD, run Vellum's own lint/build tools, and
+   use `scripts/publish-vellum-testing.sh` to prepare a fork branch.
+   Vellum requires the repository owner—not an automation operator—to
+   inspect that branch and personally open and describe the pull request.
