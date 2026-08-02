@@ -80,15 +80,14 @@ Deterministically regenerates `assets/icon.png` from code (see
    (an `xtask` test fails if these drift apart).
 2. Tag `vX.Y.Z` and push. `.github/workflows/release.yml` cross-builds
    the armv7 binary inside `ghcr.io/toltec-dev/rust:v4.0`, packages an
-   AppLoad bundle zip, and attaches it (with SHA-256/512 checksums) to a
-   GitHub Release.
+   AppLoad bundle zip, attaches it (with SHA-256/512 checksums) to a
+   private-source GitHub Release, and mirrors the artifacts to the public
+   `remarkable-calendar-notes-releases` repository.
 3. Fill in the Vellum recipe's checksums from that release with
-   `scripts/update-vellum-checksums.sh`. Until it runs, the recipe carries
-   explicit `PLACEHOLDER-...` markers — deliberately not checksum-shaped,
-   so nothing can mistake an unreleased recipe for a verified one.
-4. To propose the new version to Vellum, run
-   `scripts/publish-vellum-testing.sh` against your fork of
-   `vellum-dev/vellum` — **this requires your own GitHub PAT/`gh auth
-   login`, refuses to run while placeholders remain, and does not
-   auto-publish**; a Vellum maintainer must review the PR and choose to
-   publish it to their testing repository.
+   `scripts/update-vellum-checksums.sh`.
+4. Do not submit the Vellum recipe while this source repository is
+   private. Vellum requires maintainers to review and build the source,
+   and requires the repository owner—not an automation operator—to open
+   and describe the contribution. If the source is made public later,
+   review/clean the VELBUILD, run Vellum's own lint/build tools, and then
+   use `scripts/publish-vellum-testing.sh`.

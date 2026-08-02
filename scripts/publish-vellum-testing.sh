@@ -11,6 +11,9 @@
 #     *testing* repository; there is no automatic/self-service path, by
 #     Vellum's own design.
 #   - This script only gets a correctly-formed PR in front of a maintainer.
+#   - Vellum requires the application source to be publicly reviewable.
+#     This repository is private by default, so the script refuses to run
+#     unless the owner explicitly confirms that the source is now public.
 #
 # Requirements (all yours to provide — none of this is bundled or assumed):
 #   - A personal GitHub fork of https://github.com/vellum-dev/vellum
@@ -26,7 +29,9 @@
 #     script refuses to commit a recipe that still has placeholders.
 #
 # Usage:
-#   VELLUM_FORK_URL=git@github.com:<you>/vellum.git scripts/publish-vellum-testing.sh
+#   SOURCE_REPOSITORY_PUBLIC=1 \
+#   VELLUM_FORK_URL=git@github.com:<you>/vellum.git \
+#   scripts/publish-vellum-testing.sh
 #
 # Optional:
 #   VELLUM_WORKDIR   local clone location (default: dist/vellum-fork)
@@ -34,6 +39,12 @@
 #   OPEN_PR=1        also run `gh pr create` (requires `gh auth login` first)
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+: "${SOURCE_REPOSITORY_PUBLIC:?Set SOURCE_REPOSITORY_PUBLIC=1 only after the application source is publicly reviewable}"
+if [ "$SOURCE_REPOSITORY_PUBLIC" != "1" ]; then
+  echo "error: Vellum requires publicly reviewable application source." >&2
+  exit 1
+fi
 
 : "${VELLUM_FORK_URL:?Set VELLUM_FORK_URL to your fork of vellum-dev/vellum, e.g. git@github.com:you/vellum.git}"
 WORKDIR="${VELLUM_WORKDIR:-dist/vellum-fork}"

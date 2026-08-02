@@ -28,22 +28,31 @@ Requires reMarkable OS **3.26–3.27.x** (see
 
 ## Install
 
-> **Not yet published to Vellum.** A `vellum add
-> remarkable-calendar-notes` one-liner is the intended *future* install
-> path, and will only work once [vellum-dev/vellum](https://github.com/vellum-dev/vellum)
-> maintainers have reviewed and accepted this package (see
-> `scripts/publish-vellum-testing.sh` and
-> [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)). Until then, use the
-> release bundle below.
+The current install is manual because the app is not in Vellum's package
+feed. In short:
 
-Today: download the `remarkable-calendar-notes-<version>-armv7.zip`
-bundle from the public
-[release repository](https://github.com/astafan8/remarkable-calendar-notes-releases/releases),
-verify its checksum, and copy it into AppLoad's app directory — full
-steps in [docs/INSTALL.md](docs/INSTALL.md). Launch it from **AppLoad**,
-which is the only supported launcher (see
-[docs/LIMITATIONS.md](docs/LIMITATIONS.md) on why a dedicated xochitl
-sidebar icon is not offered).
+1. Connect the rM2 by USB and SSH to `root@10.11.99.1`.
+2. Install Vellum, then run `vellum add appload tripletap` and
+   `xovi/rebuild_hashtable`.
+3. Download and extract the latest ARMv7 bundle from the public
+   [release repository](https://github.com/astafan8/remarkable-calendar-notes-releases/releases).
+4. From the computer, copy the extracted folder:
+
+   ```sh
+   scp -r remarkable-calendar-notes root@10.11.99.1:/home/root/xovi/exthome/appload/
+   ```
+
+5. Triple-press the tablet's power button to start XOVI, open
+   **AppLoad**, tap **Reload**, then open **Calendar Notes**.
+
+The complete first-time instructions—including how to find the SSH
+password, install Vellum safely, verify the release checksum, and recover
+after an OS update—are in [docs/INSTALL.md](docs/INSTALL.md).
+
+Vellum maintainers will not accept the package while its source remains
+private, so `vellum add remarkable-calendar-notes` is not currently an
+option. Launching through AppLoad is supported; a dedicated xochitl
+sidebar icon is not (see [docs/LIMITATIONS.md](docs/LIMITATIONS.md)).
 
 ## In-app setup
 

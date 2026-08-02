@@ -132,16 +132,18 @@ CI compiles those paths for the real armv7 target (`.github/workflows/ci.yml`),
 which catches type/ABI mistakes but not runtime ones. Treat on-device
 behavior as verified by running it, not by a green CI badge.
 
-## Vellum publication requires a human maintainer
+## Vellum cannot accept the current private-source package
 
-`scripts/publish-vellum-testing.sh` prepares a PR against
-`vellum-dev/vellum`; it cannot publish a package to Vellum's testing
-repository on its own — that step is exclusively performed by Vellum's
-own maintainers after PR review, by Vellum's design. Until that happens
-the app installs from the release bundle only (see `docs/INSTALL.md`),
-and the recipe's checksums stay as explicit placeholders
-(`scripts/update-vellum-checksums.sh` replaces them once a release
-exists).
+The public release repository makes binaries downloadable, but Vellum's
+maintainers also require reviewable source so they can inspect and build
+the package. This project's source repository is private, so the app
+cannot currently be accepted into Vellum's testing or stable feed.
+
+The checked-in VELBUILD and publishing helper are retained for a future
+source-publication decision. Any contribution must be reviewed and
+opened by the repository owner, then accepted by a Vellum maintainer.
+Until then, install the public release bundle manually as described in
+`docs/INSTALL.md`.
 
 ## Network refreshes are best-effort and asynchronous
 
