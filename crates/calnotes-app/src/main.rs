@@ -9,6 +9,7 @@
 //!   QTFB socket required.
 
 mod app;
+mod diagnostics;
 mod display;
 
 use app::App;
@@ -19,7 +20,18 @@ fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("preview") => run_preview(&args[1..]),
-        Some("run") | None => run_device(),
+        Some("run") | None => {
+            let log_path = diagnostics::init();
+            diagnostics::log(format_args!(
+                "diagnostic log: {}",
+                log_path
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "unavailable".to_string())
+            ));
+            diagnostics::log(format_args!("arguments: {args:?}"));
+            run_device()
+        }
         Some("--help") | Some("-h") => {
             print_usage();
             ExitCode::SUCCESS
@@ -153,22 +165,52 @@ mod device_loop {
     }
 
     pub fn run() -> ExitCode {
-        let mut app = match App::new() {
-            Ok(a) => a,
-            Err(e) => {
-                eprintln!("remarkable-calendar-notes: failed to load app state: {e}");
-                return ExitCode::FAILURE;
+        super::diagnostics::log(format_args!(
+            "device mode: HOME={:?}, QTFB_KEY present={}",
+            std::env::var_os("HOME"),
+            std::env::var_os("QTFB_KEY").is_some()
+        ));
+        let requested_key = std::env::var("QTFB_KEY").unwrap_or_else(|_| "<missing>".to_string());
+        let mut client = match QtfbClient::connect(CANVAS_W as usize, CANVAS_H as usize) {
+            Ok(mut c) => {
+                let shared_bytes = c.shared_memory().len();
+                super::diagnostics::log(format_args!(
+                    "QTFB connected: requested_key={}, confirmed_key={}, dimensions={}x{}, shared_bytes={}, expected_bytes={}",
+                    requested_key,
+                    c.framebuffer_key,
+                    c.width,
+                    c.height,
+                    shared_bytes,
+                    CANVAS_W as usize * CANVAS_H as usize * 2
+                ));
+                c
             }
-        };
-
-        let client = match QtfbClient::connect(CANVAS_W as usize, CANVAS_H as usize) {
-            Ok(c) => c,
             Err(e) => {
-                eprintln!("remarkable-calendar-notes: failed to connect to QTFB host: {e}");
+                super::diagnostics::log(format_args!("QTFB connection failed: {e}"));
                 return ExitCode::FAILURE;
             }
         };
         let mut sink = QtfbSink(client);
+
+        let mut app = match App::new() {
+            Ok(app) => {
+                super::diagnostics::log(format_args!(
+                    "state loaded: view={:?}, sources={}, ink_days={}",
+                    app.state.config.view_mode,
+                    app.state.config.sources.len(),
+                    app.state.ink.days.len()
+                ));
+                app
+            }
+            Err(error) => {
+                super::diagnostics::log(format_args!("state load failed: {error}"));
+                return show_fatal_screen(
+                    &mut sink,
+                    "STARTUP ERROR",
+                    &format!("STATE LOAD FAILED: {error}"),
+                );
+            }
+        };
 
         // The one and only framebuffer. It is rendered into on startup and
         // then *incrementally* modified: each pen sample draws a single
@@ -177,7 +219,10 @@ mod device_loop {
         // completed background refreshes.
         let mut fb = FrameBuffer::new(CANVAS_W as usize, CANVAS_H as usize);
         app.start_refresh();
-        redraw(&mut sink, &app, &mut fb);
+        super::diagnostics::log(format_args!("initial source refresh started"));
+        if !redraw(&mut sink, &app, &mut fb, "initial") {
+            return show_fatal_screen(&mut sink, "DISPLAY ERROR", "CHECK DEVICE LOG");
+        }
         let mut last_refresh = Instant::now();
 
         let mut pen_down = false;
@@ -201,8 +246,13 @@ mod device_loop {
                                     if let Err(e) =
                                         display::draw_segment(&mut sink, &mut fb, segment)
                                     {
-                                        eprintln!(
-                                            "remarkable-calendar-notes: qtfb partial update failed: {e}"
+                                        super::diagnostics::log(format_args!(
+                                            "partial update failed: {e}"
+                                        ));
+                                        return show_fatal_screen(
+                                            &mut sink,
+                                            "DISPLAY ERROR",
+                                            "PARTIAL UPDATE FAILED",
                                         );
                                     }
                                 }
@@ -220,12 +270,17 @@ mod device_loop {
                             _ => {}
                         }
                     }
-                    if needs_full_redraw {
-                        redraw(&mut sink, &app, &mut fb);
+                    if needs_full_redraw && !redraw(&mut sink, &app, &mut fb, "input") {
+                        return show_fatal_screen(
+                            &mut sink,
+                            "DISPLAY ERROR",
+                            "INPUT REDRAW FAILED",
+                        );
                     }
                 }
                 Err(_) => {
                     // Host closed the socket (window closed): exit cleanly.
+                    super::diagnostics::log(format_args!("QTFB host closed the socket"));
                     return ExitCode::SUCCESS;
                 }
             }
@@ -233,12 +288,26 @@ mod device_loop {
             // Background refresh / Google login results are applied here;
             // neither ever blocks this loop.
             if app.poll_background() {
-                redraw(&mut sink, &app, &mut fb);
+                super::diagnostics::log(format_args!("background update: {}", app.status));
+                if !redraw(&mut sink, &app, &mut fb, "background") {
+                    return show_fatal_screen(
+                        &mut sink,
+                        "DISPLAY ERROR",
+                        "BACKGROUND REDRAW FAILED",
+                    );
+                }
             }
 
             if last_refresh.elapsed() >= AUTO_REFRESH_INTERVAL {
                 app.start_refresh();
-                redraw(&mut sink, &app, &mut fb);
+                super::diagnostics::log(format_args!("automatic source refresh started"));
+                if !redraw(&mut sink, &app, &mut fb, "automatic refresh") {
+                    return show_fatal_screen(
+                        &mut sink,
+                        "DISPLAY ERROR",
+                        "AUTOMATIC REDRAW FAILED",
+                    );
+                }
                 last_refresh = Instant::now();
             }
 
@@ -246,9 +315,60 @@ mod device_loop {
         }
     }
 
-    fn redraw(sink: &mut QtfbSink, app: &App, fb: &mut FrameBuffer) {
-        if let Err(e) = display::redraw(sink, app, fb) {
-            eprintln!("remarkable-calendar-notes: qtfb update request failed: {e}");
+    fn redraw(sink: &mut QtfbSink, app: &App, fb: &mut FrameBuffer, reason: &str) -> bool {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            display::redraw(sink, app, fb)
+        })) {
+            Ok(Ok(stats)) => {
+                super::diagnostics::log(format_args!(
+                    "{reason} redraw accepted: render_time={:?}, source_non_white={}, shared_non_white={}",
+                    stats.render_time,
+                    stats.source_has_non_white_pixels,
+                    stats.shared_memory_has_non_white_bytes
+                ));
+                if stats.source_has_non_white_pixels && stats.shared_memory_has_non_white_bytes {
+                    true
+                } else {
+                    super::diagnostics::log(format_args!(
+                        "{reason} redraw rejected because the rendered or published frame was blank"
+                    ));
+                    false
+                }
+            }
+            Ok(Err(error)) => {
+                super::diagnostics::log(format_args!("{reason} redraw failed: {error}"));
+                false
+            }
+            Err(_) => {
+                super::diagnostics::log(format_args!("{reason} render panicked"));
+                false
+            }
+        }
+    }
+
+    fn show_fatal_screen(sink: &mut QtfbSink, title: &str, detail: &str) -> ExitCode {
+        let mut fb = FrameBuffer::new(CANVAS_W as usize, CANVAS_H as usize);
+        let log_path = super::diagnostics::path()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "LOG UNAVAILABLE".to_string());
+        display::render_fatal_screen(&mut fb, title, detail, &log_path);
+        fb.write_rgb565_into(sink.pixels());
+        match sink.request_full_update() {
+            Ok(()) => super::diagnostics::log(format_args!("fatal screen published: {title}")),
+            Err(error) => {
+                super::diagnostics::log(format_args!("fatal screen publish failed: {error}"))
+            }
+        }
+        let mut last_refresh = Instant::now();
+        loop {
+            if sink.0.poll_events().is_err() {
+                return ExitCode::FAILURE;
+            }
+            if last_refresh.elapsed() >= Duration::from_secs(5) {
+                let _ = sink.request_full_update();
+                last_refresh = Instant::now();
+            }
+            std::thread::sleep(Duration::from_millis(100));
         }
     }
 }

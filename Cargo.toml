@@ -8,7 +8,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 license = "MIT"
 authors = ["remarkable-calendar-notes contributors"]
@@ -19,5 +19,5 @@ rust-version = "1.75"
 opt-level = "z"
 lto = true
 strip = true
-panic = "abort"
+panic = "unwind"
 codegen-units = 1

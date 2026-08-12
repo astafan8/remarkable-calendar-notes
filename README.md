@@ -54,6 +54,11 @@ The complete first-time instructions—including how to find the SSH
 password, install Vellum safely, verify the release checksum, and recover
 after an OS update—are in [docs/INSTALL.md](docs/INSTALL.md).
 
+If the app fails to render, it writes a persistent diagnostic log to
+`/home/root/.local/share/remarkable-calendar-notes/calendar-notes.log`.
+On Windows, `scripts/collect-device-log.ps1` copies it into a folder that
+can be attached to a bug report.
+
 The source is now public, but `vellum add remarkable-calendar-notes` is
 still not available until the repository owner personally reviews and
 submits the packages and Vellum's maintainers accept them. Manual release
