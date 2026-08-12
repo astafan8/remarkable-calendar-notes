@@ -48,6 +48,7 @@ jobs:
         run: |
           sh -n scripts/collect-device-log.sh
           sh -n scripts/device-diagnostics-remote.sh
+          sh -n scripts/diagnose-on-device.sh
           sh -n scripts/install-device.sh
 
       - name: Build the OS 3.27 sidebar icon resource
@@ -154,3 +155,66 @@ jobs:
             target/qtfb-arm-ci/calendar-notes.ppm
             target/qtfb-arm-ci/process.log
             target/qtfb-arm-ci/data/calendar-notes.log
+
+  musl-static:
+    name: static musl binary launches and renders (qemu)
+    # A fully static musl binary has no dependency on the device's glibc or
+    # dynamic loader, so it keeps running across firmware updates that change
+    # or remove those — the most likely cause of "worked once, then blank
+    # with no log". This job builds that binary and proves it starts and
+    # paints a non-blank frame under an ARM emulator with NO sysroot (which
+    # only a genuinely static binary can do).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install target, cross, and qemu
+        run: |
+          rustup target add armv7-unknown-linux-musleabihf
+          sudo apt-get update
+          sudo apt-get install -y qemu-user file
+          cargo install cross --locked --version 0.2.5
+
+      - name: Build the fully static armv7 musl binary
+        run: |
+          cross build --release -p calnotes-app \
+            --target armv7-unknown-linux-musleabihf
+
+      - name: Verify the binary is statically linked
+        run: |
+          bin=target/armv7-unknown-linux-musleabihf/release/remarkable-calendar-notes
+          file "$bin"
+          file "$bin" | grep -q "statically linked" \
+            || { echo "ERROR: binary is not statically linked" >&2; exit 1; }
+          if readelf -l "$bin" | grep -qi 'interpreter'; then
+            echo "ERROR: static binary unexpectedly has a program interpreter" >&2
+            exit 1
+          fi
+
+      - name: Launch the static binary through QTFB under qemu (no sysroot)
+        run: |
+          rm -rf target/qtfb-musl-ci
+          install -Dm755 \
+            target/armv7-unknown-linux-musleabihf/release/remarkable-calendar-notes \
+            target/qtfb-musl-ci/bundle/remarkable-calendar-notes
+          install -Dm644 external.manifest.json \
+            target/qtfb-musl-ci/bundle/external.manifest.json
+          python3 scripts/qtfb_ci_harness.py \
+            --binary target/qtfb-musl-ci/bundle/remarkable-calendar-notes \
+            --manifest target/qtfb-musl-ci/bundle/external.manifest.json \
+            --screenshot target/qtfb-musl-ci/calendar-notes.ppm \
+            --data-dir target/qtfb-musl-ci/data \
+            --process-log target/qtfb-musl-ci/process.log \
+            --emulator /usr/bin/qemu-arm \
+            --drop-full-updates 3
+
+      - name: Upload static musl screenshot and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qtfb-musl-static-screenshot
+          if-no-files-found: warn
+          path: |
+            target/qtfb-musl-ci/calendar-notes.ppm
+            target/qtfb-musl-ci/process.log
+            target/qtfb-musl-ci/data/calendar-notes.log
