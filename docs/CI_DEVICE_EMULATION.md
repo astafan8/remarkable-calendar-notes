@@ -98,7 +98,11 @@ than the host binary plus the existing real-target cross build.
 The normal CI job runs unit tests for packet/manifest/pixel conversion, stages
 the binary, manifest, and icon with the same layout AppLoad installs, runs the
 end-to-end harness after the release host build, and uploads the screenshot and
-diagnostic logs. Locally on Linux:
+diagnostic logs. A second pass launches the actual armv7 release binary through
+`qemu-arm` and an armhf sysroot. Both passes deliberately discard the first
+three full-frame requests and require a later timed startup repaint, covering
+AppLoad's asynchronous QTFB-controller attachment rather than merely checking
+the first socket write. Locally on Linux:
 
 ```sh
 cargo build --release -p calnotes-app

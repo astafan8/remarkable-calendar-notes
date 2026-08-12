@@ -49,7 +49,7 @@ checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 
 [[package]]
 name = "calnotes-app"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "calnotes-core",
  "calnotes-device",
@@ -60,7 +60,7 @@ dependencies = [
 
 [[package]]
 name = "calnotes-core"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "base64",
  "chrono",
@@ -73,7 +73,7 @@ dependencies = [
 
 [[package]]
 name = "calnotes-device"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "libc",
 ]
@@ -1036,7 +1036,7 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "xtask"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "png",
 ]
