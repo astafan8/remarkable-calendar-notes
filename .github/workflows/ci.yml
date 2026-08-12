@@ -76,7 +76,7 @@ jobs:
             --screenshot target/qtfb-ci/calendar-notes.ppm \
             --data-dir target/qtfb-ci/data \
             --process-log target/qtfb-ci/process.log \
-            --drop-full-updates 2
+            --drop-full-updates 3
 
       - name: Upload QTFB screenshot and logs
         if: always()
@@ -142,7 +142,7 @@ jobs:
             --process-log target/qtfb-arm-ci/process.log \
             --emulator /usr/bin/qemu-arm \
             --sysroot /usr/arm-linux-gnueabihf \
-            --drop-full-updates 2
+            --drop-full-updates 3
 
       - name: Upload ARM QTFB screenshot and logs
         if: always()
