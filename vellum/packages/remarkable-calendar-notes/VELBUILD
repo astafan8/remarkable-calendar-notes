@@ -49,9 +49,8 @@ predeinstall() {
 	fi
 }
 
-# Replace the release archive placeholder with
-# scripts/update-vellum-checksums.sh after publishing v0.1.10.
+# Checksums recorded from the published v0.1.10 release.
 sha512sums="
-PLACEHOLDER-ARMV7-ZIP  remarkable-calendar-notes-0.1.10-armv7.zip
+af9fabd2189fd0ce9c5daa2cb3a95d4ce73a6475bda8bdb985cb3175777ea19fa86991c540e41dc6fd401c5d34ac00fd1fdb689bc6138a2c336ca36667424bd8  remarkable-calendar-notes-0.1.10-armv7.zip
 9f39ea5e24a0eaf3f0e3217170cded95184fe8a6f179d4d19c4c11c110e5be135be23d7edb0b3cec093d1a4ea93ffec753f4b8fcf9b0ac1fc5856f7a95f13773  LICENSE
 "
