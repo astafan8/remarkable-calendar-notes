@@ -145,6 +145,12 @@ mod device_loop {
     /// How often to poll enabled sources for fresh events while running,
     /// independent of any user-triggered refresh.
     const AUTO_REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);
+    /// AppLoad associates the QTFB shared image with its QML controller
+    /// asynchronously and does not acknowledge repaint requests. Republish
+    /// briefly after startup so a request queued before that association
+    /// cannot leave the window white until the next user action.
+    const STARTUP_REPAINT_INTERVAL: Duration = Duration::from_millis(300);
+    const STARTUP_REPAINT_COUNT: u8 = 5;
 
     /// The device's real display sink: QTFB shared memory plus its update
     /// requests. Deliberately trivial — everything that decides *what* to
@@ -233,6 +239,8 @@ mod device_loop {
             return show_fatal_screen(&mut sink, "DISPLAY ERROR", "CHECK DEVICE LOG");
         }
         let mut last_refresh = Instant::now();
+        let mut startup_repaints_remaining = STARTUP_REPAINT_COUNT;
+        let mut next_startup_repaint = Instant::now() + STARTUP_REPAINT_INTERVAL;
 
         let mut pen_down = false;
 
@@ -318,6 +326,20 @@ mod device_loop {
                     );
                 }
                 last_refresh = Instant::now();
+            }
+
+            if startup_repaints_remaining > 0 && Instant::now() >= next_startup_repaint {
+                let attempt = STARTUP_REPAINT_COUNT - startup_repaints_remaining + 1;
+                if !redraw(
+                    &mut sink,
+                    &app,
+                    &mut fb,
+                    &format!("startup repaint {attempt}/{STARTUP_REPAINT_COUNT}"),
+                ) {
+                    return show_fatal_screen(&mut sink, "DISPLAY ERROR", "STARTUP REPAINT FAILED");
+                }
+                startup_repaints_remaining -= 1;
+                next_startup_repaint += STARTUP_REPAINT_INTERVAL;
             }
 
             std::thread::sleep(Duration::from_millis(16));

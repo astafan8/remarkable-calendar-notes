@@ -76,6 +76,23 @@ class QtfbHarnessTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 HARNESS.validate_manifest(manifest, binary)
 
+    def test_launch_command_supports_an_arm_emulator_and_sysroot(self):
+        binary = Path("/tmp/remarkable-calendar-notes")
+        emulator = Path("/usr/bin/qemu-arm")
+        sysroot = Path("/usr/arm-linux-gnueabihf")
+        self.assertEqual(
+            HARNESS.launch_command(binary, emulator, sysroot),
+            [
+                str(emulator),
+                "-L",
+                str(sysroot),
+                str(binary),
+                "run",
+            ],
+        )
+        with self.assertRaises(ValueError):
+            HARNESS.launch_command(binary, sysroot=Path("/tmp/sysroot"))
+
 
 if __name__ == "__main__":
     unittest.main()
