@@ -23,8 +23,6 @@ jobs:
   build-armv7:
     name: Build armv7 release binary
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/toltec-dev/rust:v4.0
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -36,21 +34,31 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Install packaging tools
+      - name: Install target, cross, and packaging tools
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends qtbase5-dev-tools zip
+          rustup target add armv7-unknown-linux-musleabihf
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qtbase5-dev-tools zip qemu-user file
+          cargo install cross --locked --version 0.2.5
 
-      - name: Cross-build for armv7 (reMarkable 2)
+      - name: Cross-build a fully static armv7 binary (reMarkable 2)
         shell: bash
         run: |
           set -euo pipefail
-          . /opt/x-tools/switch-arm.sh
-          export CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER="${CROSS_COMPILE}gcc"
-          cargo build --release -p calnotes-app --target "$CARGO_BUILD_TARGET"
-          "${CROSS_COMPILE}strip" "target/$CARGO_BUILD_TARGET/release/remarkable-calendar-notes"
+          target=armv7-unknown-linux-musleabihf
+          # A static musl binary has no dependency on the device's glibc or
+          # dynamic loader, so it runs regardless of firmware changes.
+          cross build --release -p calnotes-app --target "$target"
+          bin="target/$target/release/remarkable-calendar-notes"
+          file "$bin"
+          file "$bin" | grep -q "statically linked" \
+            || { echo "ERROR: release binary is not statically linked" >&2; exit 1; }
+          # Prove it actually starts on an ARM emulator (no sysroot needed
+          # precisely because it is static) before we ship it.
+          qemu-arm "$bin" --help >/dev/null
           mkdir -p dist/stage/remarkable-calendar-notes
-          cp "target/$CARGO_BUILD_TARGET/release/remarkable-calendar-notes" dist/stage/remarkable-calendar-notes/
+          cp "$bin" dist/stage/remarkable-calendar-notes/
           cp assets/icon.png dist/stage/remarkable-calendar-notes/
           cp external.manifest.json dist/stage/remarkable-calendar-notes/
           chmod 755 dist/stage/remarkable-calendar-notes/remarkable-calendar-notes
@@ -74,6 +82,8 @@ jobs:
             dist/stage-diagnostics/remarkable-calendar-notes-diagnostics/
           cp scripts/device-diagnostics-remote.sh \
             dist/stage-diagnostics/remarkable-calendar-notes-diagnostics/
+          cp scripts/diagnose-on-device.sh \
+            dist/stage-diagnostics/remarkable-calendar-notes-diagnostics/
           cp scripts/install-device.ps1 \
             dist/stage-diagnostics/remarkable-calendar-notes-diagnostics/
           cp scripts/install-device.sh \
@@ -83,6 +93,7 @@ jobs:
           chmod 755 \
             dist/stage-diagnostics/remarkable-calendar-notes-diagnostics/collect-device-log.sh \
             dist/stage-diagnostics/remarkable-calendar-notes-diagnostics/device-diagnostics-remote.sh \
+            dist/stage-diagnostics/remarkable-calendar-notes-diagnostics/diagnose-on-device.sh \
             dist/stage-diagnostics/remarkable-calendar-notes-diagnostics/install-device.sh
 
       - name: Package AppLoad bundle

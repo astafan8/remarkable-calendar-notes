@@ -22,6 +22,31 @@ window:
 If the app opens but behaves as if freshly installed, a stored settings
 file was likely reset — check the log for a `state warning:` line.
 
+## If the screen is blank and there is NO log at all
+
+The app writes its log *before* it connects to the display, so **a blank
+screen with no log file means the binary never started** — either the
+device could not execute it (for example after a firmware update changed
+the system C library / dynamic loader, which also wipes XOVI/AppLoad), or
+AppLoad never launched it. The regular log collectors cannot help here
+because there is nothing to collect.
+
+Run the on-device diagnostic instead. It executes the binary directly and
+prints a full report to your terminal — copy the output and share it:
+
+```sh
+ssh root@10.11.99.1 'sh -s' < diagnose-on-device.sh
+```
+
+`diagnose-on-device.sh` ships in the diagnostics bundle (and lives in
+`scripts/`). The key line is the direct `--help` run: if that prints usage
+the binary works and the problem is the AppLoad/QTFB launch; if it crashes
+or reports a missing loader/library, the binary cannot run on this device.
+
+Since v0.1.10 the release binary is **fully statically linked** (musl), so
+it has no dependency on the device's C library or dynamic loader and keeps
+running across firmware updates — the most common cause of this failure.
+
 ## Collecting the log
 
 The collector runs on the **computer connected to the reMarkable**, not
