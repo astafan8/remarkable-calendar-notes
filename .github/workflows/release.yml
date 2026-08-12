@@ -107,7 +107,7 @@ jobs:
           sha512sum dist/calendarNotesSidebar-3.27.rcc \
             > dist/calendarNotesSidebar-3.27.rcc.sha512
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: remarkable-calendar-notes-armv7
           path: |
