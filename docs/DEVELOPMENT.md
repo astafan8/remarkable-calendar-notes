@@ -64,6 +64,24 @@ directory the real device uses; override it for a clean sandbox:
 REMARKABLE_CALENDAR_NOTES_DATA_DIR=./scratch-data cargo run -p calnotes-app -- preview
 ```
 
+## Device-mode QTFB screenshot (Linux)
+
+CI also launches the real host-compiled binary's `run` subcommand against a
+minimal, protocol-faithful AppLoad QTFB host and captures the shared RGB565
+framebuffer:
+
+```sh
+cargo build --release -p calnotes-app
+python3 scripts/qtfb_ci_harness.py \
+  --binary target/release/remarkable-calendar-notes \
+  --screenshot target/qtfb-calendar-notes.ppm
+```
+
+This exercises the Unix socket, shared-memory, device-loop, and update
+signaling paths without proprietary firmware. It is not an OS/xochitl/XOVI
+emulator; see [CI_DEVICE_EMULATION.md](CI_DEVICE_EMULATION.md) for the research,
+coverage boundaries, and pinned upstream sources.
+
 ## Regenerating the icon
 
 ```sh

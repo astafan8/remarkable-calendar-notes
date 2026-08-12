@@ -59,6 +59,35 @@ jobs:
             sidebar/3.27/calendarNotesSidebar.qrc
           test -s /tmp/calendarNotesSidebar.rcc
 
+      - name: Test fake QTFB host
+        run: python3 -m unittest scripts/test_qtfb_ci_harness.py
+
+      - name: Launch device mode and capture QTFB screenshot
+        run: |
+          rm -rf target/qtfb-ci
+          install -Dm755 target/release/remarkable-calendar-notes \
+            target/qtfb-ci/bundle/remarkable-calendar-notes
+          install -Dm644 external.manifest.json \
+            target/qtfb-ci/bundle/external.manifest.json
+          install -Dm644 assets/icon.png target/qtfb-ci/bundle/icon.png
+          python3 scripts/qtfb_ci_harness.py \
+            --binary target/qtfb-ci/bundle/remarkable-calendar-notes \
+            --manifest target/qtfb-ci/bundle/external.manifest.json \
+            --screenshot target/qtfb-ci/calendar-notes.ppm \
+            --data-dir target/qtfb-ci/data \
+            --process-log target/qtfb-ci/process.log
+
+      - name: Upload QTFB screenshot and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qtfb-device-mode-screenshot
+          if-no-files-found: warn
+          path: |
+            target/qtfb-ci/calendar-notes.ppm
+            target/qtfb-ci/process.log
+            target/qtfb-ci/data/calendar-notes.log
+
   armv7-check:
     name: clippy/check (armv7 — real reMarkable 2 target)
     runs-on: ubuntu-latest
