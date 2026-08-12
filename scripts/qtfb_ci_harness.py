@@ -84,6 +84,20 @@ def validate_manifest(path: Path, binary: Path) -> dict[str, object]:
     return manifest
 
 
+def launch_command(
+    binary: Path, emulator: Path | None = None, sysroot: Path | None = None
+) -> list[str]:
+    command = []
+    if emulator is not None:
+        command.append(str(emulator))
+        if sysroot is not None:
+            command.extend(["-L", str(sysroot)])
+    elif sysroot is not None:
+        raise ValueError("--sysroot requires --emulator")
+    command.extend([str(binary), "run"])
+    return command
+
+
 def capture(args: argparse.Namespace) -> None:
     if sys.platform != "linux" or not hasattr(socket, "SOCK_SEQPACKET"):
         raise RuntimeError("the QTFB harness requires Linux SOCK_SEQPACKET support")
@@ -93,8 +107,14 @@ def capture(args: argparse.Namespace) -> None:
     screenshot = args.screenshot.resolve()
     data_dir = args.data_dir.resolve()
     log_path = args.process_log.resolve()
+    emulator = args.emulator.resolve() if args.emulator is not None else None
+    sysroot = args.sysroot.resolve() if args.sysroot is not None else None
     if not binary.is_file():
         raise FileNotFoundError(binary)
+    if emulator is not None and not emulator.is_file():
+        raise FileNotFoundError(emulator)
+    if sysroot is not None and not sysroot.is_dir():
+        raise FileNotFoundError(sysroot)
     validate_manifest(manifest, binary)
 
     screenshot.parent.mkdir(parents=True, exist_ok=True)
@@ -124,7 +144,7 @@ def capture(args: argparse.Namespace) -> None:
             }
         )
         process = subprocess.Popen(
-            [str(binary), "run"],
+            launch_command(binary, emulator, sysroot),
             cwd=str(manifest.parent),
             env=environment,
             stdout=subprocess.PIPE,
@@ -212,6 +232,16 @@ def main() -> int:
     )
     parser.add_argument(
         "--process-log", type=Path, default=Path("target/qtfb-ci-process.log")
+    )
+    parser.add_argument(
+        "--emulator",
+        type=Path,
+        help="Optional executable such as qemu-arm used to launch the binary",
+    )
+    parser.add_argument(
+        "--sysroot",
+        type=Path,
+        help="Optional emulator dynamic-loader root (passed as -L)",
     )
     parser.add_argument("--timeout", type=float, default=30.0)
     args = parser.parse_args()
