@@ -345,7 +345,7 @@ mod packaging_tests {
         // The publish job downloads the artifact into dist/ and uploads
         // exactly those globs.
         assert!(workflow.contains("path: dist"));
-        for glob in ["dist/*.zip", "dist/*.sha256", "dist/*.sha512"] {
+        for glob in ["dist/*.zip", "dist/*.rcc", "dist/*.sha256", "dist/*.sha512"] {
             assert!(workflow.contains(glob), "release.yml must upload {glob}");
         }
         assert!(!workflow.contains("remarkable-calendar-notes-releases"));
@@ -383,6 +383,13 @@ mod packaging_tests {
         assert!(qmd.contains("SPDX-License-Identifier: GPL-3.0-only"));
         assert!(qmd
             .contains("AppLoadLauncher.launchApplication(\"external::remarkable-calendar-notes\""));
+        assert!(qmd.contains("calendarNotesSidebar\\"));
+        assert!(qmd.contains("qrc:/remarkable-calendar-notes/icons/calendar-notes"));
+        assert!(recipe.contains("calendarNotesSidebar-3.27.rcc"));
+        assert!(recipe.contains("calendarNotesSidebar.rcc"));
+        let qrc =
+            fs::read_to_string(repo_root().join("sidebar/3.27/calendarNotesSidebar.qrc")).unwrap();
+        assert!(qrc.contains("../../assets/icon.png"));
     }
 
     #[test]
@@ -391,7 +398,21 @@ mod packaging_tests {
             fs::read_to_string(repo_root().join(".github/workflows/release.yml")).unwrap();
         assert!(workflow.contains("dist/remarkable-calendar-notes-${version}-xovi-sidebar.zip"));
         assert!(workflow.contains("sidebar/3.27/calendarNotesSidebar.qmd"));
+        assert!(workflow.contains("sidebar/3.27/calendarNotesSidebar.qrc"));
+        assert!(workflow.contains("calendarNotesSidebar-3.27.rcc"));
         assert!(workflow.contains("remarkable-calendar-notes-xovi-sidebar/qt-resource-rebuilder"));
+        for helper in [
+            "collect-device-log.ps1",
+            "collect-device-log.sh",
+            "device-diagnostics-remote.sh",
+            "install-device.ps1",
+            "install-device.sh",
+        ] {
+            assert!(
+                workflow.contains(helper),
+                "diagnostics release must include {helper}"
+            );
+        }
     }
 
     #[test]
@@ -425,6 +446,40 @@ mod packaging_tests {
         assert_eq!(
             sources, checksums,
             "every source= entry needs a matching sha512sums line, in order"
+        );
+    }
+
+    #[test]
+    fn sidebar_checksum_entries_name_exactly_the_source_files() {
+        let text = sidebar_velbuild();
+        let pkgver = field(&text, "pkgver");
+        let sources: Vec<String> = text
+            .split("source=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .expect("a source block")
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                line.trim()
+                    .rsplit('/')
+                    .next()
+                    .unwrap()
+                    .replace("$pkgver", pkgver)
+            })
+            .collect();
+        let checksums: Vec<String> = text
+            .split("sha512sums=\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .expect("a sha512sums block")
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| line.split_whitespace().nth(1).unwrap().to_string())
+            .collect();
+        assert_eq!(
+            sources, checksums,
+            "every sidebar source needs a matching checksum in order"
         );
     }
 }

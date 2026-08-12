@@ -16,12 +16,48 @@ const MAX_LOG_BYTES: u64 = 1024 * 1024;
 static LOG: OnceLock<Mutex<File>> = OnceLock::new();
 static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
 
+#[cfg(unix)]
+pub fn write_start_marker() {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64())
+        .unwrap_or(0.0);
+    let directory = PathBuf::from("/home/root/.local/share/remarkable-calendar-notes");
+    if fs::create_dir_all(&directory).is_err() {
+        return;
+    }
+    let pid = std::process::id();
+    let temporary = directory.join(format!(".process-started-{pid}-{timestamp:.3}.tmp"));
+    let marker = directory.join("process-started.txt");
+    let Ok(mut file) = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temporary)
+    else {
+        return;
+    };
+    let result = writeln!(
+        file,
+        "version={}\npid={pid}\ntimestamp={timestamp:.3}",
+        env!("CARGO_PKG_VERSION")
+    )
+    .and_then(|()| file.sync_all());
+    drop(file);
+    if result.is_ok() {
+        let _ = fs::rename(&temporary, marker);
+    } else {
+        let _ = fs::remove_file(temporary);
+    }
+}
+
 pub fn init() -> Option<PathBuf> {
     if let Some(path) = LOG_PATH.get() {
         return Some(path.clone());
     }
-    let preferred = persistence::data_dir()
-        .unwrap_or_else(|_| PathBuf::from("/home/root/.local/share/remarkable-calendar-notes"));
+    let preferred = preferred_log_directory();
     let path = open_log_in(&preferred)
         .or_else(|| open_log_in(&std::env::temp_dir()))
         .map(|(file, path)| {
@@ -39,6 +75,20 @@ pub fn init() -> Option<PathBuf> {
         std::process::id()
     ));
     Some(path)
+}
+
+fn preferred_log_directory() -> PathBuf {
+    if let Ok(over_ride) = std::env::var(persistence::DATA_DIR_ENV) {
+        return PathBuf::from(over_ride);
+    }
+    #[cfg(unix)]
+    {
+        PathBuf::from("/home/root/.local/share/remarkable-calendar-notes")
+    }
+    #[cfg(not(unix))]
+    {
+        persistence::data_dir().unwrap_or_else(|_| std::env::temp_dir())
+    }
 }
 
 fn open_log_in(dir: &std::path::Path) -> Option<(File, PathBuf)> {

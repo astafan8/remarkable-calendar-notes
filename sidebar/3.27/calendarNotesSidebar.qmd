@@ -20,17 +20,22 @@ AFFECT [[4911547370760691430]]
                 ~&5972374&~: calendarNotesSidebar
                 ~&8399878573055752961&~: "calendarNotesSidebar"
                 ~&214642559243&~: ~&6504222003&~("Calendar Notes")
-                ~&8399601734642709923&~: "file:///home/root/xovi/exthome/appload/remarkable-calendar-notes/icon.png"
+                ~&8399601734642709923&~: "qrc:/remarkable-calendar-notes/icons/calendar-notes"
                 ~&7082453764421&~: ~&214625660372&~
                 ~&233726547792244&~: ~&6504329801&~
                 ~&254542236275632405&~: {
                     AppLoadLauncher.launchApplication("external::remarkable-calendar-notes", [], {}, false);
-                    ~&233744436321411&~.~&6500896584423236548&~();
+                    ~&6504254477&~.~&6500896584423236548&~();
                 }
-                ~&7081629735527&~.preferredHeight: ~&7082020628281&~.~&15061686673205541622&~
+                ~&7081629735527&~.~&17520348323745447649&~: ~&7082020628281&~.~&15061686673205541622&~
                 ~&7081629735527&~.~&7797818826744279624&~: ~&7083038346995&~.~&214646099849&~
-                ~&11921478716705041271&~: ~&233744436321411&~
+                ~&11921478716705041271&~: ~&6504254477&~
             }
         }
+    END TRAVERSE
+    TRAVERSE [[3819512207256720568]]#[[6504254477]]
+        REBUILD [[15578034235503008618]]
+            LOCATE AFTER STREAM \~&16045040163728568448&~\ INSERT STREAM \, calendarNotesSidebar\
+        END REBUILD
     END TRAVERSE
 END AFFECT

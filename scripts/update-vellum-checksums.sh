@@ -55,18 +55,24 @@ fi
 mv "$VELBUILD.tmp" "$VELBUILD"
 
 SIDEBAR_QMD="calendarNotesSidebar.qmd"
+SIDEBAR_RCC="calendarNotesSidebar-3.27.rcc"
 curl -fsSL -o "$WORK/$SIDEBAR_QMD" \
   "https://raw.githubusercontent.com/${UPSTREAM}/${DIST_REPO}/v${PKGVER}/sidebar/3.27/${SIDEBAR_QMD}"
+curl -fsSL -o "$WORK/$SIDEBAR_RCC" \
+  "${BASE}/releases/download/v${PKGVER}/${SIDEBAR_RCC}"
 curl -fsSL -o "$WORK/GPL-LICENSE" \
   "https://raw.githubusercontent.com/asivery/rm-appload/v0.5.3/LICENSE"
 QMD_SUM="$(sha512sum "$WORK/$SIDEBAR_QMD" | cut -d' ' -f1)"
+RCC_SUM="$(sha512sum "$WORK/$SIDEBAR_RCC" | cut -d' ' -f1)"
 GPL_SUM="$(sha512sum "$WORK/GPL-LICENSE" | cut -d' ' -f1)"
 
 echo "==> Rewriting $SIDEBAR_VELBUILD sha512sums"
-awk -v qmd_name="$SIDEBAR_QMD" -v qmd_sum="$QMD_SUM" -v lic_sum="$GPL_SUM" '
+awk -v qmd_name="$SIDEBAR_QMD" -v qmd_sum="$QMD_SUM" \
+  -v rcc_name="$SIDEBAR_RCC" -v rcc_sum="$RCC_SUM" -v lic_sum="$GPL_SUM" '
   /^sha512sums="/ {
     print "sha512sums=\"";
     print qmd_sum "  " qmd_name;
+    print rcc_sum "  " rcc_name;
     print lic_sum "  LICENSE";
     in_block = 1;
     next

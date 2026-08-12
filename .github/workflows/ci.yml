@@ -44,6 +44,21 @@ jobs:
       - name: cargo build --release (host)
         run: cargo build --release -p calnotes-app
 
+      - name: Validate host/device helper scripts
+        run: |
+          sh -n scripts/collect-device-log.sh
+          sh -n scripts/device-diagnostics-remote.sh
+          sh -n scripts/install-device.sh
+
+      - name: Build the OS 3.27 sidebar icon resource
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qtbase5-dev-tools
+          /usr/lib/qt5/bin/rcc --binary \
+            -o /tmp/calendarNotesSidebar.rcc \
+            sidebar/3.27/calendarNotesSidebar.qrc
+          test -s /tmp/calendarNotesSidebar.rcc
+
   armv7-check:
     name: clippy/check (armv7 — real reMarkable 2 target)
     runs-on: ubuntu-latest

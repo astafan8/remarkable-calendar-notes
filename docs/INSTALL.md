@@ -62,40 +62,47 @@ On Windows, verify the downloaded ZIP:
 Get-Content .\remarkable-calendar-notes-<version>-armv7.zip.sha256
 ```
 
-The two hashes must match. Then extract the ZIP. It contains one
-`remarkable-calendar-notes` folder with the binary, `icon.png`, and
-`external.manifest.json`.
+The two hashes must match. Keep the app ZIP intact for the recommended
+installer below. (It contains one `remarkable-calendar-notes` folder with
+the binary, `icon.png`, and `external.manifest.json`.)
 
-## 4. Copy the app to AppLoad
+## 4. Install the app from the computer
 
-From the directory containing the extracted folder, run:
+Also download and extract
+`remarkable-calendar-notes-<version>-diagnostics.zip`. On Windows, run:
 
-```sh
-scp -r remarkable-calendar-notes root@10.11.99.1:/home/root/xovi/exthome/appload/
+```powershell
+.\install-device.ps1 -Bundle .\remarkable-calendar-notes-<version>-armv7.zip
 ```
 
-Use the Wi-Fi IP instead of `10.11.99.1` if that is how SSH worked in
-step 1.
+On Linux/macOS:
+
+```sh
+chmod +x install-device.sh
+./install-device.sh --bundle remarkable-calendar-notes-<version>-armv7.zip
+```
+
+This uses one SSH password prompt, copies the archive directly, and runs
+`chmod 755` on the ARM binary. That last step is essential because
+extracting and copying from Windows can otherwise leave AppLoad unable to
+execute the app, producing a blank window before the app can create logs.
 
 ### Optional: install the OS 3.27 sidebar launcher
 
-If you downloaded the `-xovi-sidebar.zip`, extract it and copy both
-payloads:
+Pass the `-xovi-sidebar.zip` to the same installer instead:
 
-```sh
-scp -r remarkable-calendar-notes-xovi-sidebar/appload/remarkable-calendar-notes root@10.11.99.1:/home/root/xovi/exthome/appload/
-scp remarkable-calendar-notes-xovi-sidebar/qt-resource-rebuilder/calendarNotesSidebar.qmd root@10.11.99.1:/home/root/xovi/exthome/qt-resource-rebuilder/
-ssh root@10.11.99.1 xovi/rebuild_hashtable
+```powershell
+.\install-device.ps1 -Bundle .\remarkable-calendar-notes-<version>-xovi-sidebar.zip
 ```
 
-Restart XOVI/xochitl afterward. Calendar Notes will still be present in
-AppLoad, and will additionally have its own sidebar icon. The icon
-launches the same external AppLoad application directly.
+It installs the app, repaired QMD launcher, and Qt icon resource, then
+rebuilds the hashtable. Restart XOVI/xochitl afterward.
 
 If xochitl fails to load correctly, SSH in and run:
 
 ```sh
 rm /home/root/xovi/exthome/qt-resource-rebuilder/calendarNotesSidebar.qmd
+rm /home/root/xovi/exthome/qt-resource-rebuilder/calendarNotesSidebar.rcc
 xovi/rebuild_hashtable
 ```
 
@@ -126,8 +133,9 @@ Google and iCloud setup need additional provider-specific details; see
 - **No AppLoad sidebar item:** XOVI is not running. Triple-press power or
   SSH in and run `xovi/start`.
 - **No Calendar Notes sidebar icon:** the optional QMD is OS 3.27-only.
-  Confirm the file is in `exthome/qt-resource-rebuilder`, then rerun
-  `xovi/rebuild_hashtable` and restart XOVI.
+  Confirm both `calendarNotesSidebar.qmd` and
+  `calendarNotesSidebar.rcc` are in `exthome/qt-resource-rebuilder`, then
+  rerun `xovi/rebuild_hashtable` and restart XOVI.
 - **Blank Calendar Notes window:** releases 0.1.5 and newer show a visible
   startup error when state loading or the first framebuffer update fails,
   and write a device log. Download the release's `-diagnostics.zip`,
@@ -144,7 +152,9 @@ Google and iCloud setup need additional provider-specific details; see
   ./collect-device-log.sh
   ```
 
-  Or copy the essential log directly from the computer:
+  The collector asks for the SSH password once. It succeeds even when no
+  app log exists by collecting binary permissions and filtered
+  AppLoad/xochitl launch errors. Or copy the essential log directly:
 
   ```sh
   scp root@10.11.99.1:/home/root/.local/share/remarkable-calendar-notes/calendar-notes.log .

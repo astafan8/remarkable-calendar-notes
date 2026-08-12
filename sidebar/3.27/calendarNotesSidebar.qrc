@@ -1,0 +1,5 @@
+<RCC>
+  <qresource prefix="/remarkable-calendar-notes/icons">
+    <file alias="calendar-notes">../../assets/icon.png</file>
+  </qresource>
+</RCC>

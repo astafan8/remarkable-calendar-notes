@@ -118,4 +118,49 @@ mod tests {
         assert_eq!(reloaded.ink.days.len(), 1);
         std::env::remove_var(persistence::DATA_DIR_ENV);
     }
+
+    #[test]
+    #[serial_test::serial]
+    fn app_state_loads_v0_1_3_persisted_json() {
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var(persistence::DATA_DIR_ENV, dir.path());
+        std::fs::write(
+            dir.path().join(CONFIG_FILE),
+            r#"{
+                "utc_offset_minutes": 0,
+                "view_mode": "Month",
+                "sources": [],
+                "anchor_date": "2026-08-12"
+            }"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join(INK_FILE),
+            r#"{
+                "days": {
+                    "2026-08-12": {
+                        "strokes": [{
+                            "points": [
+                                {"x": 0.1, "y": 0.2, "pressure": 1.0},
+                                {"x": 0.3, "y": 0.4, "pressure": 0.5}
+                            ]
+                        }]
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let state = AppState::load().unwrap();
+        assert_eq!(state.config.view_mode, crate::model::ViewMode::Month);
+        assert_eq!(state.ink.days.len(), 1);
+        assert_eq!(
+            state
+                .ink
+                .strokes_for(chrono::NaiveDate::from_ymd_opt(2026, 8, 12).unwrap())
+                .len(),
+            1
+        );
+        std::env::remove_var(persistence::DATA_DIR_ENV);
+    }
 }

@@ -54,7 +54,8 @@ minor. Re-run `xovi/rebuild_hashtable` after OS or
 qt-resource-rebuilder updates.
 
 If a bad or stale patch prevents the interface from loading, remove
-`calendarNotesSidebar.qmd` over SSH and rebuild the hashtab. The sidebar
+`calendarNotesSidebar.qmd` and `calendarNotesSidebar.rcc` over SSH and
+rebuild the hashtab. The sidebar
 button still launches the same external QTFB process, so it does not
 improve pen latency or provide native xochitl drawing tools.
 

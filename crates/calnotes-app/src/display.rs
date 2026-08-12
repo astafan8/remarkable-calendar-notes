@@ -71,6 +71,23 @@ pub fn render_fatal_screen(fb: &mut FrameBuffer, title: &str, detail: &str, log_
     fb.draw_text(80, 640, &truncate(log_path, 52), BLACK, 3);
 }
 
+pub fn render_startup_screen(fb: &mut FrameBuffer) {
+    fb.clear(calnotes_core::render::WHITE);
+    let width = fb.width as i32;
+    let height = fb.height as i32;
+    fb.draw_rect_outline(
+        Rect {
+            x: 48,
+            y: 48,
+            w: width - 96,
+            h: height - 96,
+        },
+        BLACK,
+    );
+    fb.draw_text(100, 300, "CALENDAR NOTES", BLACK, 7);
+    fb.draw_text(100, 480, "STARTING...", BLACK, 5);
+}
+
 fn truncate(text: &str, max_chars: usize) -> String {
     let upper = text.to_uppercase();
     if upper.chars().count() <= max_chars {
@@ -270,6 +287,13 @@ mod tests {
             "state could not be loaded",
             "/tmp/calendar-notes.log",
         );
+        assert!(fb.non_white_pixel_count() > 1_000);
+    }
+
+    #[test]
+    fn startup_screen_is_visibly_non_white() {
+        let mut fb = FrameBuffer::new(CANVAS_W as usize, CANVAS_H as usize);
+        render_startup_screen(&mut fb);
         assert!(fb.non_white_pixel_count() > 1_000);
     }
 }

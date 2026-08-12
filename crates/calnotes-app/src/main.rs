@@ -21,6 +21,8 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("preview") => run_preview(&args[1..]),
         Some("run") | None => {
+            #[cfg(unix)]
+            diagnostics::write_start_marker();
             let log_path = diagnostics::init();
             diagnostics::log(format_args!(
                 "diagnostic log: {}",
@@ -191,6 +193,14 @@ mod device_loop {
             }
         };
         let mut sink = QtfbSink(client);
+        let mut fb = FrameBuffer::new(CANVAS_W as usize, CANVAS_H as usize);
+        display::render_startup_screen(&mut fb);
+        fb.write_rgb565_into(sink.pixels());
+        if let Err(error) = sink.request_full_update() {
+            super::diagnostics::log(format_args!("startup screen publish failed: {error}"));
+            return ExitCode::FAILURE;
+        }
+        super::diagnostics::log(format_args!("startup screen published"));
 
         let mut app = match App::new() {
             Ok(app) => {
@@ -217,7 +227,6 @@ mod device_loop {
         // line segment into it and publishes just that rectangle. A full
         // re-render happens only for navigation, view/UI changes, and
         // completed background refreshes.
-        let mut fb = FrameBuffer::new(CANVAS_W as usize, CANVAS_H as usize);
         app.start_refresh();
         super::diagnostics::log(format_args!("initial source refresh started"));
         if !redraw(&mut sink, &app, &mut fb, "initial") {
