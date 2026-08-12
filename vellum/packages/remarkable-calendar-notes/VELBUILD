@@ -52,6 +52,6 @@ predeinstall() {
 # Replace these explicit placeholders from the published v0.1.4 release
 # with scripts/update-vellum-checksums.sh before proposing the recipe.
 sha512sums="
-PLACEHOLDER-RUN-scripts/update-vellum-checksums.sh  remarkable-calendar-notes-0.1.4-armv7.zip
-PLACEHOLDER-RUN-scripts/update-vellum-checksums.sh  LICENSE
+d11ea8d5407565b954759d50954e55e7efef8fe6ed108ac9e8233fc4ee22fe082a4b97217f7c9a0304a0ee2b5efe471801dcd5515a4bd5099d59b0c4bbc9d6b1  remarkable-calendar-notes-0.1.4-armv7.zip
+9f39ea5e24a0eaf3f0e3217170cded95184fe8a6f179d4d19c4c11c110e5be135be23d7edb0b3cec093d1a4ea93ffec753f4b8fcf9b0ac1fc5856f7a95f13773  LICENSE
 "
