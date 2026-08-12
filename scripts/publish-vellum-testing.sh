@@ -40,14 +40,17 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 : "${VELLUM_FORK_URL:?Set VELLUM_FORK_URL to your fork of vellum-dev/vellum, e.g. git@github.com:you/vellum.git}"
 WORKDIR="${VELLUM_WORKDIR:-dist/vellum-fork}"
 BRANCH="${VELLUM_BRANCH:-add-remarkable-calendar-notes}"
-VELBUILD="vellum/packages/remarkable-calendar-notes/VELBUILD"
+PACKAGES="remarkable-calendar-notes remarkable-calendar-notes-sidebar"
 
-if grep -q 'PLACEHOLDER-' "$VELBUILD"; then
-  echo "error: $VELBUILD still contains checksum placeholders." >&2
-  echo "       Publish a GitHub Release, then run:" >&2
-  echo "         scripts/update-vellum-checksums.sh" >&2
-  exit 1
-fi
+for package in $PACKAGES; do
+  velbuild="vellum/packages/$package/VELBUILD"
+  if grep -q 'PLACEHOLDER-' "$velbuild"; then
+    echo "error: $velbuild still contains checksum placeholders." >&2
+    echo "       Publish a GitHub Release, then run:" >&2
+    echo "         scripts/update-vellum-checksums.sh" >&2
+    exit 1
+  fi
+done
 
 if [ ! -d "$WORKDIR/.git" ]; then
   echo "==> Cloning $VELLUM_FORK_URL into $WORKDIR"
@@ -59,15 +62,18 @@ fi
 
 git -C "$WORKDIR" checkout -B "$BRANCH"
 
-echo "==> Copying package definition"
+echo "==> Copying package definitions"
 mkdir -p "$WORKDIR/packages"
-rm -rf "$WORKDIR/packages/remarkable-calendar-notes"
-cp -r vellum/packages/remarkable-calendar-notes "$WORKDIR/packages/"
+for package in $PACKAGES; do
+  rm -rf "$WORKDIR/packages/$package"
+  cp -r "vellum/packages/$package" "$WORKDIR/packages/"
+done
 
 echo
 echo "==> Files staged in $WORKDIR. Before committing, you must:"
 echo "    1. Run vellum's own lint: (cd $WORKDIR && ./scripts/lint-packages.sh remarkable-calendar-notes --apkbuild-lint)"
 echo "    2. Run vellum's own build: (cd $WORKDIR && ./scripts/build-package.sh remarkable-calendar-notes armv7)"
+echo "    3. Repeat lint/build for remarkable-calendar-notes-sidebar (noarch)."
 echo "    Both require Docker or Podman; neither is invoked by this script."
 echo
 
@@ -77,8 +83,8 @@ if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
   exit 0
 fi
 
-git -C "$WORKDIR" add packages/remarkable-calendar-notes
-git -C "$WORKDIR" commit -m "Add remarkable-calendar-notes AppLoad package"
+git -C "$WORKDIR" add packages/remarkable-calendar-notes packages/remarkable-calendar-notes-sidebar
+git -C "$WORKDIR" commit -m "Add Calendar Notes AppLoad and sidebar packages"
 git -C "$WORKDIR" push -u origin "$BRANCH"
 
 echo
@@ -88,4 +94,5 @@ echo "    https://github.com/vellum-dev/vellum/compare/main...astafan8:$BRANCH?e
 echo
 echo "A Vellum maintainer must review and merge this PR, then choose to"
 echo "publish it to the testing repository, before it is installable via"
-echo "'vellum add remarkable-calendar-notes@testing'. This is not automatic."
+echo "'vellum add remarkable-calendar-notes@testing'. The optional sidebar is"
+echo "installed separately with 'vellum add remarkable-calendar-notes-sidebar@testing'."

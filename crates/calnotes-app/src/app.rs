@@ -31,10 +31,14 @@ use std::time::Instant;
 pub const CANVAS_W: i32 = calnotes_core::render::SCREEN_WIDTH as i32;
 pub const CANVAS_H: i32 = calnotes_core::render::SCREEN_HEIGHT as i32;
 
-/// Height of each of the two toolbar rows (view switcher, then actions),
+/// Height of each toolbar row (views, navigation, then ink tools),
 /// in canvas pixels.
-const TOOLBAR_ROW_H: i32 = 60;
-const TOOLBAR_H: i32 = TOOLBAR_ROW_H * 2;
+const TOOLBAR_ROW_H: i32 = 96;
+const TOOLBAR_H: i32 = TOOLBAR_ROW_H * 3;
+const MONTH_LABEL_W: i32 = 52;
+const UI_TEXT_SCALE: i32 = 4;
+const BODY_TEXT_SCALE: i32 = 3;
+const EVENT_TEXT_SCALE: i32 = 2;
 
 /// Pen stroke width, in canvas pixels. Shared by the full re-render and the
 /// incremental per-segment drawing so both produce identical ink.
@@ -60,15 +64,19 @@ enum Action {
     Prev,
     Today,
     Next,
+    Pen,
+    Erase,
+    Lasso,
     Undo,
     ClearDay,
 }
 
-const ACTIONS: [Action; 6] = [
-    Action::Settings,
-    Action::Prev,
-    Action::Today,
-    Action::Next,
+const NAV_ACTIONS: [Action; 4] = [Action::Settings, Action::Prev, Action::Today, Action::Next];
+
+const TOOL_ACTIONS: [Action; 5] = [
+    Action::Pen,
+    Action::Erase,
+    Action::Lasso,
     Action::Undo,
     Action::ClearDay,
 ];
@@ -80,21 +88,37 @@ impl Action {
             Action::Prev => "PREV",
             Action::Today => "TODAY",
             Action::Next => "NEXT",
+            Action::Pen => "PEN",
+            Action::Erase => "ERASE",
+            Action::Lasso => "LASSO",
             Action::Undo => "UNDO",
-            Action::ClearDay => "CLR",
+            Action::ClearDay => "CLEAR",
         }
     }
 }
 
-/// One in-progress pen stroke: which date cell it started in (strokes
-/// cannot cross cells — lifting/re-pressing on a different cell begins a
-/// new stroke there), the ink store's stroke index, and the last point
-/// already drawn on screen, which is what makes incremental drawing
-/// possible.
-struct ActiveStroke {
-    date: NaiveDate,
-    stroke_index: usize,
-    last_drawn: (i32, i32),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InkTool {
+    Pen,
+    Erase,
+    Lasso,
+}
+
+enum ActiveGesture {
+    Draw {
+        date: NaiveDate,
+        stroke_index: usize,
+        last_drawn: (i32, i32),
+    },
+    Erase {
+        date: NaiveDate,
+        points: Vec<NormPoint>,
+    },
+    Lasso {
+        date: NaiveDate,
+        points: Vec<NormPoint>,
+        last_drawn: (i32, i32),
+    },
 }
 
 /// The newest not-yet-drawn piece of a pen stroke, in absolute canvas
@@ -168,7 +192,8 @@ pub struct App {
     events_cache: HashMap<String, Vec<Event>>,
     /// The window the cached events were fetched for, if any.
     cached_window: Option<Window>,
-    active_stroke: Option<ActiveStroke>,
+    active_gesture: Option<ActiveGesture>,
+    pub ink_tool: InkTool,
     pub editor: Option<SourceEditor>,
     /// Editable text field for the fixed UTC offset (minutes), shown on
     /// the settings screen. `Some` while the user is actively editing it.
@@ -202,7 +227,8 @@ impl App {
             screen: Screen::Calendar,
             events_cache,
             cached_window: None,
-            active_stroke: None,
+            active_gesture: None,
+            ink_tool: InkTool::Pen,
             editor: None,
             offset_editor: None,
             next_source_seq: 0,
@@ -249,6 +275,7 @@ impl App {
         if self.refresh_rx.is_some() {
             return;
         }
+
         let window = self.fetch_window();
         let offset = self.offset();
         let mut sources: Vec<CalendarSource> = self
@@ -278,6 +305,40 @@ impl App {
         } else {
             "NO ENABLED SOURCES".to_string()
         };
+    }
+
+    fn start_source_test(&mut self, source_id: &str) {
+        if self.refresh_rx.is_some() {
+            self.status = "WAIT FOR CURRENT REFRESH".to_string();
+            return;
+        }
+        let Some(source) = self
+            .state
+            .config
+            .sources
+            .iter()
+            .find(|source| source.id == source_id)
+            .cloned()
+        else {
+            return;
+        };
+        let window = self.fetch_window();
+        let offset = self.offset();
+        let label = source.label.clone();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut source = source;
+            let fetched = sources::refresh_source(&mut source, window, offset);
+            let mut events = HashMap::new();
+            events.insert(source.id.clone(), fetched);
+            let _ = tx.send(RefreshOutcome {
+                sources: vec![source],
+                events,
+                window,
+            });
+        });
+        self.refresh_rx = Some(rx);
+        self.status = format!("TESTING {}...", label.to_uppercase());
     }
 
     /// Refresh synchronously. Only used by the desktop `preview` command
@@ -557,14 +618,20 @@ impl App {
     }
 
     fn grid_cells(&self) -> Vec<view::DateCell> {
+        let month_gutter = if self.state.config.view_mode == ViewMode::Month {
+            MONTH_LABEL_W
+        } else {
+            0
+        };
         view::layout(
             self.state.config.view_mode,
             self.state.config.anchor_date,
-            CANVAS_W,
+            CANVAS_W - month_gutter,
             CANVAS_H - TOOLBAR_H,
         )
         .into_iter()
         .map(|mut c| {
+            c.rect.x += month_gutter;
             c.rect.y += TOOLBAR_H;
             c
         })
@@ -592,9 +659,9 @@ impl App {
             .collect()
     }
 
-    fn action_buttons(&self) -> Vec<(Action, view::Rect)> {
-        let button_w = CANVAS_W / ACTIONS.len() as i32;
-        ACTIONS
+    fn action_buttons_for(actions: &[Action], row: i32) -> Vec<(Action, view::Rect)> {
+        let button_w = CANVAS_W / actions.len() as i32;
+        actions
             .iter()
             .enumerate()
             .map(|(i, a)| {
@@ -602,12 +669,19 @@ impl App {
                     *a,
                     view::Rect {
                         x: i as i32 * button_w,
-                        y: TOOLBAR_ROW_H,
+                        y: row * TOOLBAR_ROW_H,
                         w: button_w,
                         h: TOOLBAR_ROW_H,
                     },
                 )
             })
+            .collect()
+    }
+
+    fn action_buttons(&self) -> Vec<(Action, view::Rect)> {
+        Self::action_buttons_for(&NAV_ACTIONS, 1)
+            .into_iter()
+            .chain(Self::action_buttons_for(&TOOL_ACTIONS, 2))
             .collect()
     }
 
@@ -648,6 +722,9 @@ impl App {
             Action::Prev => self.navigate(-1),
             Action::Next => self.navigate(1),
             Action::Today => self.go_to_today(),
+            Action::Pen => self.ink_tool = InkTool::Pen,
+            Action::Erase => self.ink_tool = InkTool::Erase,
+            Action::Lasso => self.ink_tool = InkTool::Lasso,
             Action::Undo => self.undo_current_day(),
             Action::ClearDay => self.clear_current_day(),
         }
@@ -669,24 +746,31 @@ impl App {
         let rect = cell.rect;
         let date = cell.date;
         let (nx, ny) = view::normalize_within(rect, x, y);
-        let stroke_index = self.state.ink.begin_stroke(date);
-        self.state.ink.push_point(
-            date,
-            stroke_index,
-            NormPoint {
-                x: nx,
-                y: ny,
-                pressure,
-            },
-        );
-        // Anchor incremental drawing at the *denormalized* point, so the
-        // segments drawn live are pixel-identical to what a later full
-        // re-render of the persisted stroke produces.
+        let point = NormPoint {
+            x: nx,
+            y: ny,
+            pressure,
+        };
         let last_drawn = view::denormalize_within(rect, nx, ny);
-        self.active_stroke = Some(ActiveStroke {
-            date,
-            stroke_index,
-            last_drawn,
+        self.active_gesture = Some(match self.ink_tool {
+            InkTool::Pen => {
+                let stroke_index = self.state.ink.begin_stroke(date);
+                self.state.ink.push_point(date, stroke_index, point);
+                ActiveGesture::Draw {
+                    date,
+                    stroke_index,
+                    last_drawn,
+                }
+            }
+            InkTool::Erase => ActiveGesture::Erase {
+                date,
+                points: vec![point],
+            },
+            InkTool::Lasso => ActiveGesture::Lasso {
+                date,
+                points: vec![point],
+                last_drawn,
+            },
         });
     }
 
@@ -696,10 +780,15 @@ impl App {
     /// framebuffer it already holds and refreshes only its dirty rect —
     /// no full re-render, no full-frame copy, per pen sample.
     pub fn pen_move(&mut self, x: i32, y: i32, pressure: f32) -> Option<PenSegment> {
-        let active = self.active_stroke.as_ref()?;
-        let date = active.date;
-        let stroke_index = active.stroke_index;
-        let (px0, py0) = active.last_drawn;
+        let (date, px0, py0) = match self.active_gesture.as_ref()? {
+            ActiveGesture::Draw {
+                date, last_drawn, ..
+            }
+            | ActiveGesture::Lasso {
+                date, last_drawn, ..
+            } => (*date, last_drawn.0, last_drawn.1),
+            ActiveGesture::Erase { date, .. } => (*date, 0, 0),
+        };
         let cells = self.grid_cells();
         // A stroke stays bound to the cell it started in even if the pen
         // drifts slightly over a cell boundary, so a single mark never
@@ -715,18 +804,31 @@ impl App {
                 h: CANVAS_H,
             });
         let (nx, ny) = view::normalize_within(rect, x, y);
-        self.state.ink.push_point(
-            date,
-            stroke_index,
-            NormPoint {
-                x: nx,
-                y: ny,
-                pressure,
-            },
-        );
+        let point = NormPoint {
+            x: nx,
+            y: ny,
+            pressure,
+        };
         let (px1, py1) = view::denormalize_within(rect, nx, ny);
-        if let Some(active) = &mut self.active_stroke {
-            active.last_drawn = (px1, py1);
+        match self.active_gesture.as_mut()? {
+            ActiveGesture::Draw {
+                stroke_index,
+                last_drawn,
+                ..
+            } => {
+                self.state.ink.push_point(date, *stroke_index, point);
+                *last_drawn = (px1, py1);
+            }
+            ActiveGesture::Erase { points, .. } => {
+                points.push(point);
+                return None;
+            }
+            ActiveGesture::Lasso {
+                points, last_drawn, ..
+            } => {
+                points.push(point);
+                *last_drawn = (px1, py1);
+            }
         }
         Some(PenSegment {
             x0: px0,
@@ -737,13 +839,30 @@ impl App {
         })
     }
 
-    pub fn pen_up(&mut self) {
-        if let Some(active) = self.active_stroke.take() {
-            self.state
-                .ink
-                .discard_if_empty(active.date, active.stroke_index);
-            let _ = self.state.save_ink();
-        }
+    /// Finish the current pen gesture. Returns `true` when temporary ink
+    /// or deleted strokes require a full redraw.
+    pub fn pen_up(&mut self) -> bool {
+        let Some(active) = self.active_gesture.take() else {
+            return false;
+        };
+        let redraw = match active {
+            ActiveGesture::Draw {
+                date, stroke_index, ..
+            } => {
+                self.state.ink.discard_if_empty(date, stroke_index);
+                false
+            }
+            ActiveGesture::Erase { date, points } => {
+                self.state.ink.erase_path(date, &points, 0.035);
+                true
+            }
+            ActiveGesture::Lasso { date, points, .. } => {
+                self.state.ink.delete_inside_lasso(date, &points);
+                true
+            }
+        };
+        let _ = self.state.save_ink();
+        redraw
     }
 
     /// Feed one raw VKB key code (an `INPUT_VKB_PRESS` event's key code,
@@ -787,16 +906,32 @@ impl App {
             draw_button(fb, rect, mode.label(), active);
         }
         for (action, rect) in self.action_buttons() {
-            draw_button(fb, rect, action.label(), false);
+            let active = matches!(
+                (action, self.ink_tool),
+                (Action::Pen, InkTool::Pen)
+                    | (Action::Erase, InkTool::Erase)
+                    | (Action::Lasso, InkTool::Lasso)
+            );
+            draw_button(fb, rect, action.label(), active);
         }
         if !self.status.is_empty() {
             // Bottom edge: the only strip of the calendar screen that is
             // neither a toolbar button nor useful writing space.
-            fb.draw_text(4, CANVAS_H - 8, &self.status, GRAY, 1);
+            fb.draw_text(4, CANVAS_H - 12, &self.status, GRAY, 2);
         }
 
         let today = self.today();
-        for cell in self.grid_cells() {
+        let cells = self.grid_cells();
+        if self.state.config.view_mode == ViewMode::Month {
+            draw_vertical_text(
+                fb,
+                8,
+                TOOLBAR_H + (CANVAS_H - TOOLBAR_H) / 2,
+                &self.state.config.anchor_date.format("%B").to_string(),
+                BODY_TEXT_SCALE,
+            );
+        }
+        for (index, cell) in cells.iter().enumerate() {
             fb.draw_rect_outline(cell.rect, GRAY);
             if cell.date == today {
                 // Double outline marks the real current date.
@@ -815,13 +950,14 @@ impl App {
             fb.draw_text(cell.rect.x + 4, cell.rect.y + 4, &day_label, label_gray, 2);
 
             // Event summaries, one line each, below the day number.
-            let mut text_y = cell.rect.y + 20;
+            let mut text_y = cell.rect.y + 24;
             for event in self.events_for(cell.date) {
-                if text_y + 8 > cell.rect.y + cell.rect.h {
+                if text_y + 12 > cell.rect.y + cell.rect.h {
                     break;
                 }
-                fb.draw_text(cell.rect.x + 4, text_y, &event.summary, BLACK, 1);
-                text_y += 8;
+                let summary = fit_text(&event.summary, cell.rect.w - 8, EVENT_TEXT_SCALE);
+                fb.draw_text(cell.rect.x + 4, text_y, &summary, BLACK, EVENT_TEXT_SCALE);
+                text_y += 12;
             }
 
             // Handwritten ink, denormalized back into this cell's rect —
@@ -836,6 +972,9 @@ impl App {
                     }
                     prev = Some((px, py));
                 }
+            }
+            if self.state.config.view_mode == ViewMode::Month {
+                draw_month_boundaries(fb, &cells, index);
             }
         }
     }
@@ -881,16 +1020,33 @@ impl App {
                     return;
                 }
             }
+            if within(row.test, x, y) {
+                let id = self.state.config.sources[row.index].id.clone();
+                self.start_source_test(&id);
+                return;
+            }
             if within(row.edit, x, y) {
                 self.editor = Some(SourceEditor::new_for_edit(
                     &self.state.config.sources[row.index],
                 ));
+                self.offset_editor = None;
                 return;
             }
         }
         for (kind, rect) in &layout.add_buttons {
             if within(*rect, x, y) {
                 self.editor = Some(SourceEditor::new_for_add(*kind));
+                self.offset_editor = None;
+                return;
+            }
+        }
+        for (field, rect) in &layout.editor_fields {
+            if within(*rect, x, y) {
+                if let Some(editor) = &mut self.editor {
+                    editor.focus = *field;
+                }
+                self.offset_editor = None;
+                self.status = "USE APPLOAD KEYBOARD BUTTON".to_string();
                 return;
             }
         }
@@ -932,6 +1088,7 @@ impl App {
                     self.state.config.utc_offset_minutes.to_string(),
                 ));
             }
+            self.status = "USE APPLOAD KEYBOARD BUTTON".to_string();
             return;
         }
         if let Some(save) = layout.offset_save_button {
@@ -972,69 +1129,78 @@ impl App {
 
     fn settings_layout(&self) -> SettingsLayout {
         let back_button = view::Rect {
-            x: 0,
-            y: 0,
-            w: 150,
-            h: 50,
+            x: 20,
+            y: 16,
+            w: 220,
+            h: 88,
         };
         let refresh_button = view::Rect {
-            x: 160,
-            y: 0,
-            w: 200,
-            h: 50,
+            x: 260,
+            y: 16,
+            w: 280,
+            h: 88,
         };
         let offset_row = view::Rect {
             x: 20,
-            y: 56,
-            w: 300,
-            h: 26,
+            y: 120,
+            w: CANVAS_W - 300,
+            h: 80,
         };
         let offset_save_button = self.offset_editor.is_some().then_some(view::Rect {
-            x: 330,
-            y: 56,
-            w: 100,
-            h: 26,
+            x: CANVAS_W - 260,
+            y: 120,
+            w: 240,
+            h: 80,
         });
-        let mut y = 90;
+        let mut y = 260;
         let mut source_rows = Vec::new();
-        for (index, source) in self.state.config.sources.iter().enumerate() {
-            let row_rect = view::Rect {
-                x: 20,
-                y,
-                w: CANVAS_W - 40,
-                h: 24,
-            };
-            let is_google = matches!(source.kind, SourceKind::GoogleCalendar { .. });
-            source_rows.push(SourceRow {
-                index,
-                edit: view::Rect {
-                    x: row_rect.x,
-                    y: row_rect.y,
-                    w: row_rect.w - 420,
-                    h: row_rect.h,
-                },
-                login: is_google.then_some(view::Rect {
-                    x: row_rect.x + row_rect.w - 420,
-                    y: row_rect.y,
-                    w: 150,
-                    h: row_rect.h,
-                }),
-                toggle: view::Rect {
-                    x: row_rect.x + row_rect.w - 260,
-                    y: row_rect.y,
-                    w: 150,
-                    h: row_rect.h,
-                },
-                delete: view::Rect {
-                    x: row_rect.x + row_rect.w - 100,
-                    y: row_rect.y,
-                    w: 100,
-                    h: row_rect.h,
-                },
-            });
-            y += 30;
+        if self.editor.is_none() {
+            for (index, source) in self.state.config.sources.iter().enumerate() {
+                let row_rect = view::Rect {
+                    x: 20,
+                    y,
+                    w: CANVAS_W - 40,
+                    h: 88,
+                };
+                let is_google = matches!(source.kind, SourceKind::GoogleCalendar { .. });
+                let edit_w = if is_google { 660 } else { 500 };
+                source_rows.push(SourceRow {
+                    index,
+                    edit: view::Rect {
+                        x: row_rect.x,
+                        y: row_rect.y,
+                        w: row_rect.w - edit_w,
+                        h: row_rect.h,
+                    },
+                    login: is_google.then_some(view::Rect {
+                        x: row_rect.x + row_rect.w - 650,
+                        y: row_rect.y,
+                        w: 150,
+                        h: row_rect.h,
+                    }),
+                    test: view::Rect {
+                        x: row_rect.x + row_rect.w - 490,
+                        y: row_rect.y,
+                        w: 150,
+                        h: row_rect.h,
+                    },
+                    toggle: view::Rect {
+                        x: row_rect.x + row_rect.w - 330,
+                        y: row_rect.y,
+                        w: 150,
+                        h: row_rect.h,
+                    },
+                    delete: view::Rect {
+                        x: row_rect.x + row_rect.w - 170,
+                        y: row_rect.y,
+                        w: 170,
+                        h: row_rect.h,
+                    },
+                });
+                y += 104;
+            }
         }
-        y += 20;
+        y += 24;
         let add_kinds = [
             SourceKindChoice::LocalIcs,
             SourceKindChoice::HttpsIcs,
@@ -1042,37 +1208,53 @@ impl App {
             SourceKindChoice::Icloud,
         ];
         let add_button_w = (CANVAS_W - 40) / add_kinds.len() as i32;
-        let add_buttons: Vec<_> = add_kinds
-            .iter()
-            .enumerate()
-            .map(|(i, k)| {
-                (
-                    *k,
-                    view::Rect {
-                        x: 20 + i as i32 * add_button_w,
-                        y,
-                        w: add_button_w - 10,
-                        h: 40,
-                    },
-                )
-            })
-            .collect();
-        y += 60;
+        let add_buttons: Vec<_> = if self.editor.is_none() {
+            add_kinds
+                .iter()
+                .enumerate()
+                .map(|(i, k)| {
+                    (
+                        *k,
+                        view::Rect {
+                            x: 20 + i as i32 * add_button_w,
+                            y,
+                            w: add_button_w - 10,
+                            h: 88,
+                        },
+                    )
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
 
-        let (save_button, cancel_button) = if self.editor.is_some() {
-            let editor_top = y + 40 + self.editor_field_count() as i32 * 20;
+        let mut editor_fields = Vec::new();
+        let (save_button, cancel_button) = if let Some(editor) = &self.editor {
+            y = 280;
+            for field in editor.fields_for_kind() {
+                editor_fields.push((
+                    field,
+                    view::Rect {
+                        x: 20,
+                        y,
+                        w: CANVAS_W - 40,
+                        h: 104,
+                    },
+                ));
+                y += 120;
+            }
             (
                 Some(view::Rect {
                     x: 20,
-                    y: editor_top,
-                    w: 150,
-                    h: 40,
+                    y,
+                    w: 260,
+                    h: 88,
                 }),
                 Some(view::Rect {
-                    x: 190,
-                    y: editor_top,
-                    w: 150,
-                    h: 40,
+                    x: 300,
+                    y,
+                    w: 260,
+                    h: 88,
                 }),
             )
         } else {
@@ -1086,16 +1268,9 @@ impl App {
             offset_save_button,
             source_rows,
             add_buttons,
+            editor_fields,
             save_button,
             cancel_button,
-        }
-    }
-
-    fn editor_field_count(&self) -> usize {
-        match self.editor.as_ref().map(|e| e.kind_being_created) {
-            Some(SourceKindChoice::LocalIcs) | Some(SourceKindChoice::HttpsIcs) => 2,
-            Some(SourceKindChoice::Google) | Some(SourceKindChoice::Icloud) => 4,
-            None => 0,
         }
     }
 
@@ -1106,42 +1281,54 @@ impl App {
         draw_button(fb, layout.refresh_button, "REFRESH", false);
 
         let offset_text = if let Some(field) = &self.offset_editor {
-            format!("UTC OFFSET (MINUTES): {}", field.text)
+            format!(
+                "UTC OFFSET MINUTES: {}",
+                text_with_cursor(&field.text, field.cursor)
+            )
         } else {
             let label =
                 calnotes_core::timeutil::UtcOffset::new(self.state.config.utc_offset_minutes)
                     .label();
             format!("UTC OFFSET: {label} (TAP TO EDIT)")
         };
-        fb.draw_rect_outline(layout.offset_row, GRAY);
+        fb.draw_rect_outline(
+            layout.offset_row,
+            if self.offset_editor.is_some() {
+                BLACK
+            } else {
+                GRAY
+            },
+        );
         fb.draw_text(
-            layout.offset_row.x + 4,
-            layout.offset_row.y + 6,
-            &offset_text,
+            layout.offset_row.x + 12,
+            layout.offset_row.y + 32,
+            &fit_text(&offset_text, layout.offset_row.w - 24, BODY_TEXT_SCALE),
             BLACK,
-            1,
+            BODY_TEXT_SCALE,
         );
         if let Some(save) = layout.offset_save_button {
             draw_button(fb, save, "SAVE", false);
         }
 
-        fb.draw_text(
-            20,
-            layout.offset_row.y + layout.offset_row.h + 10,
-            "SOURCES",
-            BLACK,
-            2,
-        );
+        if self.editor.is_none() {
+            fb.draw_text(20, 222, "SOURCES", BLACK, BODY_TEXT_SCALE);
+        }
 
         for row in &layout.source_rows {
             let source = &self.state.config.sources[row.index];
             let status = status_label(&source.last_status);
-            fb.draw_text(
-                row.edit.x,
-                row.edit.y + 4,
+            let label = fit_text(
                 &format!("{} {}", source.label, status),
+                row.edit.w - 12,
+                BODY_TEXT_SCALE,
+            );
+            fb.draw_rect_outline(row.edit, BLACK);
+            fb.draw_text(
+                row.edit.x + 8,
+                row.edit.y + 34,
+                &label,
                 BLACK,
-                1,
+                BODY_TEXT_SCALE,
             );
             if let Some(login) = row.login {
                 let logged_in = matches!(
@@ -1158,6 +1345,7 @@ impl App {
                     logged_in,
                 );
             }
+            draw_button(fb, row.test, "TEST", false);
             draw_button(
                 fb,
                 row.toggle,
@@ -1172,24 +1360,28 @@ impl App {
         }
 
         if let Some(login) = &self.google_login {
-            let base_y = CANVAS_H - 80;
+            let base_y = CANVAS_H - 150;
             for (i, line) in google_login_lines(login).iter().enumerate() {
-                fb.draw_text(20, base_y + i as i32 * 16, line, BLACK, 1);
+                let line = fit_text(line, CANVAS_W - 40, BODY_TEXT_SCALE);
+                fb.draw_text(20, base_y + i as i32 * 24, &line, BLACK, BODY_TEXT_SCALE);
             }
         }
         if !self.status.is_empty() {
-            fb.draw_text(20, CANVAS_H - 20, &self.status, BLACK, 1);
+            let status = fit_text(&self.status, CANVAS_W - 40, BODY_TEXT_SCALE);
+            fb.draw_text(20, CANVAS_H - 28, &status, BLACK, BODY_TEXT_SCALE);
         }
 
         if let Some(editor) = &self.editor {
-            let mut y = layout
-                .add_buttons
-                .first()
-                .map(|(_, r)| r.y + r.h + 30)
-                .unwrap_or(200);
-            fb.draw_text(20, y, "EDIT SOURCE (TAB TO SWITCH FIELD)", BLACK, 1);
-            y += 24;
-            editor.render_fields(fb, 20, &mut y);
+            fb.draw_text(
+                20,
+                224,
+                "EDIT SOURCE - TAP A FIELD, THEN USE APPLOAD KEYBOARD",
+                BLACK,
+                BODY_TEXT_SCALE,
+            );
+            for (field, rect) in &layout.editor_fields {
+                editor.render_field(fb, *field, *rect);
+            }
             if let Some(save) = layout.save_button {
                 draw_button(fb, save, "SAVE", false);
             }
@@ -1251,10 +1443,74 @@ fn draw_button(fb: &mut FrameBuffer, rect: view::Rect, label: &str, active: bool
             GRAY,
         );
     }
-    let scale = 1;
+    let scale = (rect.w / (label.chars().count().max(1) as i32 * 4)).clamp(2, UI_TEXT_SCALE);
     let tx = rect.x + ((rect.w - FrameBuffer::text_width(label, scale)) / 2).max(2);
     let ty = rect.y + (rect.h - 5 * scale) / 2;
     fb.draw_text(tx, ty, label, BLACK, scale);
+}
+
+fn fit_text(text: &str, max_width: i32, scale: i32) -> String {
+    let max_chars = (max_width / (4 * scale)).max(0) as usize;
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    if max_chars <= 3 {
+        return text.chars().take(max_chars).collect();
+    }
+    let mut result: String = text.chars().take(max_chars - 3).collect();
+    result.push_str("...");
+    result
+}
+
+fn text_with_cursor(text: &str, cursor: usize) -> String {
+    let mut result = String::new();
+    for (index, character) in text.chars().enumerate() {
+        if index == cursor {
+            result.push('|');
+        }
+        result.push(character);
+    }
+    if cursor >= text.chars().count() {
+        result.push('|');
+    }
+    result
+}
+
+fn draw_vertical_text(fb: &mut FrameBuffer, x: i32, center_y: i32, text: &str, scale: i32) {
+    let height = text.chars().count() as i32 * 7 * scale;
+    let mut y = center_y - height / 2;
+    for character in text.chars() {
+        fb.draw_text(x, y, &character.to_string(), BLACK, scale);
+        y += 7 * scale;
+    }
+}
+
+fn draw_month_boundaries(fb: &mut FrameBuffer, cells: &[view::DateCell], index: usize) {
+    const COLS: usize = 7;
+    const THICKNESS: i32 = 5;
+    let cell = cells[index];
+    if index % COLS < COLS - 1 && cells[index + 1].date.month() != cell.date.month() {
+        fb.fill_rect(
+            view::Rect {
+                x: cell.rect.x + cell.rect.w - THICKNESS / 2,
+                y: cell.rect.y,
+                w: THICKNESS,
+                h: cell.rect.h,
+            },
+            BLACK,
+        );
+    }
+    if index + COLS < cells.len() && cells[index + COLS].date.month() != cell.date.month() {
+        fb.fill_rect(
+            view::Rect {
+                x: cell.rect.x,
+                y: cell.rect.y + cell.rect.h - THICKNESS / 2,
+                w: cell.rect.w,
+                h: THICKNESS,
+            },
+            BLACK,
+        );
+    }
 }
 
 fn within(rect: view::Rect, x: i32, y: i32) -> bool {
@@ -1266,6 +1522,7 @@ struct SourceRow {
     edit: view::Rect,
     /// "LOG IN" button, present only for Google Calendar sources.
     login: Option<view::Rect>,
+    test: view::Rect,
     toggle: view::Rect,
     delete: view::Rect,
 }
@@ -1277,6 +1534,7 @@ struct SettingsLayout {
     offset_save_button: Option<view::Rect>,
     source_rows: Vec<SourceRow>,
     add_buttons: Vec<(SourceKindChoice, view::Rect)>,
+    editor_fields: Vec<(EditorField, view::Rect)>,
     save_button: Option<view::Rect>,
     cancel_button: Option<view::Rect>,
 }
@@ -1480,32 +1738,53 @@ impl SourceEditor {
         }
     }
 
-    fn render_fields(&self, fb: &mut FrameBuffer, x: i32, y: &mut i32) {
-        let draw_field =
-            |fb: &mut FrameBuffer, y: &mut i32, name: &str, field: &TextField, mask: bool| {
-                let display = if mask {
-                    calnotes_core::config::mask_secret(&field.text)
-                } else {
-                    field.text.clone()
-                };
-                fb.draw_text(x, *y, &format!("{name}: {display}"), BLACK, 1);
-                *y += 16;
-            };
-        draw_field(fb, y, "LABEL", &self.label, false);
-        match self.kind_being_created {
-            SourceKindChoice::LocalIcs => draw_field(fb, y, "PATH", &self.path, false),
-            SourceKindChoice::HttpsIcs => draw_field(fb, y, "URL", &self.url, false),
-            SourceKindChoice::Google => {
-                draw_field(fb, y, "CLIENT ID", &self.client_id, false);
-                draw_field(fb, y, "CLIENT SECRET", &self.client_secret, true);
-                draw_field(fb, y, "CALENDAR ID", &self.calendar_id, false);
-            }
-            SourceKindChoice::Icloud => {
-                draw_field(fb, y, "APPLE ID", &self.apple_id, false);
-                draw_field(fb, y, "APP PASSWORD", &self.app_specific_password, true);
-                draw_field(fb, y, "CALENDAR URL", &self.calendar_url, false);
-            }
+    fn render_field(&self, fb: &mut FrameBuffer, field: EditorField, rect: view::Rect) {
+        let (name, value, secret) = match field {
+            EditorField::Label => ("LABEL", &self.label, false),
+            EditorField::Path => ("ICS FILE PATH", &self.path, false),
+            EditorField::Url => ("ICS URL", &self.url, false),
+            EditorField::ClientId => ("GOOGLE CLIENT ID", &self.client_id, false),
+            EditorField::ClientSecret => ("GOOGLE CLIENT SECRET", &self.client_secret, true),
+            EditorField::CalendarId => ("GOOGLE CALENDAR ID", &self.calendar_id, false),
+            EditorField::AppleId => ("APPLE ID", &self.apple_id, false),
+            EditorField::AppSpecificPassword => (
+                "ICLOUD APP-SPECIFIC PASSWORD",
+                &self.app_specific_password,
+                true,
+            ),
+            EditorField::CalendarUrl => ("ICLOUD CALENDAR URL", &self.calendar_url, false),
+        };
+        let focused = self.focus == field;
+        fb.draw_rect_outline(rect, if focused { BLACK } else { GRAY });
+        if focused {
+            fb.draw_rect_outline(
+                view::Rect {
+                    x: rect.x + 2,
+                    y: rect.y + 2,
+                    w: rect.w - 4,
+                    h: rect.h - 4,
+                },
+                BLACK,
+            );
         }
+        fb.draw_text(rect.x + 12, rect.y + 12, name, BLACK, BODY_TEXT_SCALE);
+        let raw = if secret {
+            calnotes_core::config::mask_secret(&value.text)
+        } else {
+            value.text.clone()
+        };
+        let shown = if focused {
+            text_with_cursor(&raw, value.cursor.min(raw.chars().count()))
+        } else {
+            raw
+        };
+        fb.draw_text(
+            rect.x + 12,
+            rect.y + 62,
+            &fit_text(&shown, rect.w - 24, BODY_TEXT_SCALE),
+            BLACK,
+            BODY_TEXT_SCALE,
+        );
     }
 }
 
@@ -1623,7 +1902,7 @@ mod tests {
         with_temp_data_dir(|| {
             let mut app = App::new().unwrap();
             app.pen_down(100, 10, 1.0); // inside the toolbar rows
-            assert!(app.active_stroke.is_none());
+            assert!(app.active_gesture.is_none());
         });
     }
 
@@ -1952,18 +2231,18 @@ mod tests {
         with_temp_data_dir(|| {
             let mut app = App::new().unwrap();
             app.set_view_mode(ViewMode::Day);
-            app.pen_down(100, 500, 1.0);
-            let segment = app.pen_move(104, 503, 1.0).expect("a segment to draw");
-            assert_eq!((segment.x0, segment.y0), (100, 500));
-            assert_eq!((segment.x1, segment.y1), (104, 503));
+            app.pen_down(300, 500, 1.0);
+            let segment = app.pen_move(304, 503, 1.0).expect("a segment to draw");
+            assert_eq!((segment.x0, segment.y0), (300, 500));
+            assert_eq!((segment.x1, segment.y1), (304, 503));
             let dirty = segment.dirty_rect();
             // Small: nothing like the 1404x1872 full screen.
             assert!(
                 dirty.w < 20 && dirty.h < 20,
                 "dirty rect too large: {dirty:?}"
             );
-            assert!(dirty.x <= 100 && dirty.y <= 500);
-            assert!(dirty.x + dirty.w >= 105 && dirty.y + dirty.h >= 504);
+            assert!(dirty.x <= 300 && dirty.y <= 500);
+            assert!(dirty.x + dirty.w >= 305 && dirty.y + dirty.h >= 504);
 
             // With no pen down there is nothing to draw.
             app.pen_up();
@@ -2001,6 +2280,88 @@ mod tests {
                 full.as_rgb565_bytes(),
                 "incremental pen drawing must be pixel-identical to a full re-render"
             );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn eraser_tool_removes_a_touched_stroke_and_requests_redraw() {
+        with_temp_data_dir(|| {
+            let mut app = App::new().unwrap();
+            app.set_view_mode(ViewMode::Day);
+            app.pen_down(300, 700, 1.0);
+            app.pen_move(500, 700, 1.0).unwrap();
+            assert!(!app.pen_up());
+            assert_eq!(
+                app.state
+                    .ink
+                    .strokes_for(app.state.config.anchor_date)
+                    .len(),
+                1
+            );
+
+            app.ink_tool = InkTool::Erase;
+            app.pen_down(390, 680, 1.0);
+            assert!(app.pen_move(410, 720, 1.0).is_none());
+            assert!(app.pen_up());
+            assert!(app
+                .state
+                .ink
+                .strokes_for(app.state.config.anchor_date)
+                .is_empty());
+            app.undo_current_day();
+            assert_eq!(
+                app.state
+                    .ink
+                    .strokes_for(app.state.config.anchor_date)
+                    .len(),
+                1
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn lasso_tool_removes_only_the_enclosed_stroke() {
+        with_temp_data_dir(|| {
+            let mut app = App::new().unwrap();
+            app.set_view_mode(ViewMode::Day);
+            for (from, to) in [((300, 700), (360, 760)), ((900, 1100), (960, 1160))] {
+                app.pen_down(from.0, from.1, 1.0);
+                app.pen_move(to.0, to.1, 1.0).unwrap();
+                app.pen_up();
+            }
+            app.ink_tool = InkTool::Lasso;
+            app.pen_down(250, 650, 1.0);
+            for (x, y) in [(420, 650), (420, 820), (250, 820), (250, 650)] {
+                app.pen_move(x, y, 1.0).unwrap();
+            }
+            assert!(app.pen_up());
+            let remaining = app.state.ink.strokes_for(app.state.config.anchor_date);
+            assert_eq!(remaining.len(), 1);
+            assert!(remaining[0].points[0].x > 0.5);
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn tapping_an_editor_field_moves_visible_keyboard_focus() {
+        with_temp_data_dir(|| {
+            let mut app = App::new().unwrap();
+            app.screen = Screen::Settings;
+            app.editor = Some(SourceEditor::new_for_add(SourceKindChoice::Google));
+            let layout = app.settings_layout();
+            let (_, secret_rect) = layout
+                .editor_fields
+                .iter()
+                .find(|(field, _)| *field == EditorField::ClientSecret)
+                .unwrap();
+            app.handle_touch_tap(secret_rect.x + 10, secret_rect.y + 10);
+            assert_eq!(
+                app.editor.as_ref().unwrap().focus,
+                EditorField::ClientSecret
+            );
+            assert_eq!(app.status, "USE APPLOAD KEYBOARD BUTTON");
         });
     }
 

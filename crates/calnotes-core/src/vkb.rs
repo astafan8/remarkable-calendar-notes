@@ -18,14 +18,18 @@ const ALT_MOD: i32 = 0x400000;
 const MOD_MASK: i32 = SHIFT_MOD | CTRL_MOD | ALT_MOD;
 
 const KEY_DEL: i32 = 0x7f;
-const KEY_PGUP: i32 = 0x80;
-const KEY_PGDOWN: i32 = 0x81;
-const KEY_DOWN: i32 = 0x82;
-const KEY_UP: i32 = 0x83;
-const KEY_LEFT: i32 = 0x84;
-const KEY_RIGHT: i32 = 0x85;
-const KEY_HOME: i32 = 0x86;
-const KEY_END: i32 = 0x87;
+// AppLoad 0.5.3's bundled default.layout.json emits 0x80 for its
+// backspace-image key, then 0x81..=0x88 for navigation. These values are
+// one higher than the stale symbolic constants in qtfb/common.h.
+const KEY_LAYOUT_BACKSPACE: i32 = 0x80;
+const KEY_PGUP: i32 = 0x81;
+const KEY_PGDOWN: i32 = 0x82;
+const KEY_DOWN: i32 = 0x83;
+const KEY_UP: i32 = 0x84;
+const KEY_LEFT: i32 = 0x85;
+const KEY_RIGHT: i32 = 0x86;
+const KEY_HOME: i32 = 0x87;
+const KEY_END: i32 = 0x88;
 const KEY_BACKSPACE: i32 = 0x08;
 const KEY_ENTER: i32 = 0x0d;
 const KEY_ENTER_LF: i32 = 0x0a;
@@ -71,7 +75,7 @@ pub fn decode(raw: i32) -> (VkbKey, Modifiers) {
     let code = raw & !MOD_MASK;
     let key = match code {
         KEY_DEL => VkbKey::Delete,
-        KEY_BACKSPACE => VkbKey::Backspace,
+        KEY_BACKSPACE | KEY_LAYOUT_BACKSPACE => VkbKey::Backspace,
         KEY_ENTER | KEY_ENTER_LF => VkbKey::Enter,
         KEY_TAB => VkbKey::Tab,
         KEY_PGUP => VkbKey::PageUp,
@@ -176,6 +180,7 @@ mod tests {
     #[test]
     fn decode_recognizes_special_keys() {
         assert_eq!(decode(KEY_DEL).0, VkbKey::Delete);
+        assert_eq!(decode(KEY_LAYOUT_BACKSPACE).0, VkbKey::Backspace);
         assert_eq!(decode(KEY_LEFT).0, VkbKey::ArrowLeft);
         assert_eq!(decode(KEY_HOME).0, VkbKey::Home);
         assert_eq!(decode(KEY_END).0, VkbKey::End);

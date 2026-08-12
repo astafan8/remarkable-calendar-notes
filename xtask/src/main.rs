@@ -227,6 +227,17 @@ mod packaging_tests {
         .expect("the Vellum recipe exists")
     }
 
+    fn sidebar_velbuild() -> String {
+        fs::read_to_string(
+            repo_root()
+                .join("vellum")
+                .join("packages")
+                .join("remarkable-calendar-notes-sidebar")
+                .join("VELBUILD"),
+        )
+        .expect("the sidebar Vellum recipe exists")
+    }
+
     fn field<'a>(text: &'a str, name: &str) -> &'a str {
         text.lines()
             .find_map(|l| l.strip_prefix(&format!("{name}=")))
@@ -304,8 +315,8 @@ mod packaging_tests {
             "source= must point at the release asset for v$pkgver"
         );
         assert!(
-            text.contains("remarkable-calendar-notes-releases"),
-            "Vellum must fetch from the public binary distribution repository"
+            text.contains("github.com/$upstream_author/remarkable-calendar-notes/releases"),
+            "Vellum must fetch from the main repository's public releases"
         );
 
         let workflow =
@@ -337,8 +348,8 @@ mod packaging_tests {
         for glob in ["dist/*.zip", "dist/*.sha256", "dist/*.sha512"] {
             assert!(workflow.contains(glob), "release.yml must upload {glob}");
         }
-        assert!(workflow.contains("remarkable-calendar-notes-releases"));
-        assert!(workflow.contains("secrets.PUBLIC_RELEASE_TOKEN"));
+        assert!(!workflow.contains("remarkable-calendar-notes-releases"));
+        assert!(!workflow.contains("secrets.PUBLIC_RELEASE_TOKEN"));
     }
 
     #[test]
@@ -351,6 +362,36 @@ mod packaging_tests {
         );
         let text = velbuild();
         assert_eq!(field(&text, "pkgver"), version);
+        assert_eq!(field(&sidebar_velbuild(), "pkgver"), version);
+    }
+
+    #[test]
+    fn sidebar_package_is_firmware_pinned_and_launches_the_external_app() {
+        let recipe = sidebar_velbuild();
+        let depends = field(&recipe, "depends");
+        for dependency in [
+            "remarkable-calendar-notes",
+            "qt-resource-rebuilder",
+            "appload>=0.5.3",
+            "remarkable-os>=3.27",
+            "remarkable-os<3.28",
+        ] {
+            assert!(depends.contains(dependency), "{depends}");
+        }
+        let qmd =
+            fs::read_to_string(repo_root().join("sidebar/3.27/calendarNotesSidebar.qmd")).unwrap();
+        assert!(qmd.contains("SPDX-License-Identifier: GPL-3.0-only"));
+        assert!(qmd
+            .contains("AppLoadLauncher.launchApplication(\"external::remarkable-calendar-notes\""));
+    }
+
+    #[test]
+    fn release_workflow_builds_the_optional_sidebar_archive() {
+        let workflow =
+            fs::read_to_string(repo_root().join(".github/workflows/release.yml")).unwrap();
+        assert!(workflow.contains("dist/remarkable-calendar-notes-${version}-xovi-sidebar.zip"));
+        assert!(workflow.contains("sidebar/3.27/calendarNotesSidebar.qmd"));
+        assert!(workflow.contains("remarkable-calendar-notes-xovi-sidebar/qt-resource-rebuilder"));
     }
 
     #[test]
@@ -385,16 +426,5 @@ mod packaging_tests {
             sources, checksums,
             "every source= entry needs a matching sha512sums line, in order"
         );
-    }
-
-    #[test]
-    fn no_qmd_sidebar_package_is_shipped() {
-        // A QML-resource sidebar patch cannot be produced or validated
-        // without a specific firmware build's decompiled resources, so this
-        // repository ships none — see docs/LIMITATIONS.md.
-        assert!(!repo_root().join("qmd-sidebar").exists());
-        assert!(!repo_root()
-            .join("vellum/packages/remarkable-calendar-notes-qmd-sidebar")
-            .exists());
     }
 }

@@ -1,0 +1,36 @@
+; Calendar Notes sidebar launcher, adapted from rm-appload's AppLoad
+; sidebar button:
+; https://github.com/asivery/rm-appload/blob/v0.5.3/xovi/template/appload.qmd
+; Copyright (C) 2026 asivery/rm-appload contributors
+; Modifications Copyright (C) 2026 remarkable-calendar-notes contributors
+; SPDX-License-Identifier: GPL-3.0-only
+;
+; This patch only adds a launcher. The application still runs as the
+; external QTFB app installed under AppLoad.
+;
+; Requires: reMarkable OS 3.27.x, AppLoad >= 0.5.3,
+; qt-resource-rebuilder, and a current device-generated hashtab.
+
+AFFECT [[4911547370760691430]]
+    IMPORT net.asivery.AppLoad [[180922.180921]]
+    TRAVERSE [[3819512207256720568]] > [[14125623155555875541]]#[[15885405667098360701]]
+        LOCATE AFTER [[3819512207256720568]]#[[4073320026945606142]]
+        INSERT {
+            ~&16385778650434842232&~ {
+                ~&5972374&~: calendarNotesSidebar
+                ~&8399878573055752961&~: "calendarNotesSidebar"
+                ~&214642559243&~: ~&6504222003&~("Calendar Notes")
+                ~&8399601734642709923&~: "file:///home/root/xovi/exthome/appload/remarkable-calendar-notes/icon.png"
+                ~&7082453764421&~: ~&214625660372&~
+                ~&233726547792244&~: ~&6504329801&~
+                ~&254542236275632405&~: {
+                    AppLoadLauncher.launchApplication("external::remarkable-calendar-notes", [], {}, false);
+                    ~&233744436321411&~.~&6500896584423236548&~();
+                }
+                ~&7081629735527&~.preferredHeight: ~&7082020628281&~.~&15061686673205541622&~
+                ~&7081629735527&~.~&7797818826744279624&~: ~&7083038346995&~.~&214646099849&~
+                ~&11921478716705041271&~: ~&233744436321411&~
+            }
+        }
+    END TRAVERSE
+END AFFECT

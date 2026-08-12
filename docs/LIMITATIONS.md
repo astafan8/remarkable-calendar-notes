@@ -38,23 +38,25 @@ Even with all of that, expect visibly more latency than xochitl's own
 handwriting, especially during fast strokes. This is a platform ceiling,
 not a bug in this app.
 
-## No dedicated xochitl sidebar icon
+## The optional sidebar launcher patches xochitl
 
-The app is launched from **AppLoad**, which gives it an entry (with its
-icon) in AppLoad's own launcher. It does *not* add an entry to xochitl's
-library sidebar, and this repository ships nothing that claims to.
+The standard app is launched from **AppLoad** and does not modify
+xochitl. An optional OS 3.27-only QMLDiff companion adds a real Calendar
+Notes sidebar icon and calls AppLoad's public launcher API.
 
-Adding one would mean patching xochitl's *compiled* QML resources at
-runtime (the `qt-resource-rebuilder` / QMD approach). Such a patch is
-addressed by internal numeric resource IDs that exist only inside one
-specific firmware build, are undocumented, and change between releases —
-including patch releases. They cannot be derived without decompiling a
-particular firmware's `resources.rcc` on a real device and validating the
-result there, and a wrong patch can silently no-op or destabilize
-xochitl's UI at startup. There is no way for this project's automated
-tooling to produce or verify one, so no QMD package is shipped or
-proposed. This is a platform limitation, not an oversight; AppLoad's
-launcher entry is the supported way in.
+That convenience has a larger failure surface: QMLDiff runs inside
+xochitl, and a future firmware can change the sidebar's QML structure.
+The numeric tokens in a hashed QMD are stable hashes resolved through a
+device-generated hashtab; the fragile part is the surrounding QML
+structure, not arbitrary per-build IDs. The companion is therefore pinned
+to `remarkable-os >=3.27,<3.28` and must be revalidated for every new OS
+minor. Re-run `xovi/rebuild_hashtable` after OS or
+qt-resource-rebuilder updates.
+
+If a bad or stale patch prevents the interface from loading, remove
+`calendarNotesSidebar.qmd` over SSH and rebuild the hashtab. The sidebar
+button still launches the same external QTFB process, so it does not
+improve pen latency or provide native xochitl drawing tools.
 
 ## Timezones: a single fixed UTC offset, not a timezone database
 
@@ -117,6 +119,17 @@ dependency-/license-free, at the cost of a smaller character set than a
 real typeface; lowercase text is folded to uppercase. Full-fidelity
 free-form text is still captured via handwritten ink, which has no such
 limitation.
+
+## AppLoad cannot let an external app open its keyboard
+
+AppLoad 0.5.3 owns the virtual keyboard and exposes its key events to
+QTFB applications, but exposes no application-to-host command for opening
+it. Calendar Notes focuses a field immediately when tapped and makes the
+active field/cursor prominent, but AppLoad's keyboard button must still
+be tapped once in the window chrome. The app deliberately does not draw a
+second, incompatible keyboard of its own. Backspace uses the actual
+`0x80` code emitted by AppLoad's bundled keyboard layout; Delete uses
+`0x7f`.
 
 ## Device-only code paths cannot be tested in CI
 

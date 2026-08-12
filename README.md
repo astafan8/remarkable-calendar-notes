@@ -4,12 +4,14 @@ A read-only calendar app for the **reMarkable 2**, with persistent
 handwritten notes attached to individual dates. Runs as an [AppLoad](https://github.com/asivery/rm-appload)
 external QTFB app — no jailbreak/takeover mode required.
 
-- **Views:** Day, Week, Work Week, Two Weeks, Month, with `PREV`/`TODAY`/
+- **Views:** Day, Week, Work Week, Two Weeks, Month, with compact,
+  handwriting-friendly grids and `PREV`/`TODAY`/
   `NEXT` navigation; `TODAY` always jumps to the real current date at your
   configured UTC offset.
 - **Notes:** write on any date in any view with the pen; notes are stored
   normalized to that date's grid cell, so the same handwriting renders
-  correctly in every view and survives navigation/restart. Each pen sample
+  at a fixed aspect ratio in every view and survives navigation/restart.
+  Use **PEN**, stroke **ERASE**, or **LASSO** deletion. Each pen sample
   draws only its newest stroke segment and refreshes only the few pixels
   it touched. Undo and clear-day controls included.
 - **Calendar sources**, all configured in-app (no config files to hand
@@ -29,13 +31,16 @@ Requires reMarkable OS **3.26–3.27.x** (see
 ## Install
 
 The current install is manual because the app is not in Vellum's package
-feed. In short:
+feed. Releases offer two choices: the standard AppLoad bundle, or an
+**OS 3.27-only XOVI sidebar bundle** that also adds a Calendar Notes icon
+to xochitl's normal sidebar. In short:
 
 1. Connect the rM2 by USB and SSH to `root@10.11.99.1`.
 2. Install Vellum, then run `vellum add appload tripletap` and
    `xovi/rebuild_hashtable`.
-3. Download and extract the latest ARMv7 bundle from the public
-   [release repository](https://github.com/astafan8/remarkable-calendar-notes-releases/releases).
+3. Download and extract either the latest ARMv7 bundle or the optional
+   XOVI sidebar bundle from the public
+   [main repository releases](https://github.com/astafan8/remarkable-calendar-notes/releases).
 4. From the computer, copy the extracted folder:
 
    ```sh
@@ -51,15 +56,18 @@ after an OS update—are in [docs/INSTALL.md](docs/INSTALL.md).
 
 The source is now public, but `vellum add remarkable-calendar-notes` is
 still not available until the repository owner personally reviews and
-submits the package and Vellum's maintainers accept it. Manual AppLoad
-installation remains the current path. A dedicated xochitl sidebar icon
-is not supported (see [docs/LIMITATIONS.md](docs/LIMITATIONS.md)).
+submits the packages and Vellum's maintainers accept them. Manual release
+installation remains the current path. The sidebar companion is
+firmware-pinned and has additional recovery steps because it patches
+xochitl QML; see [docs/INSTALL.md](docs/INSTALL.md) and
+[docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 
 ## In-app setup
 
 All configuration — calendar sources, the fixed UTC offset, the active
-view — is done on-device via the settings screen and AppLoad's virtual
-keyboard. See [docs/SOURCES.md](docs/SOURCES.md).
+view — is done on-device via large settings fields and AppLoad's virtual
+keyboard. Each source has a **TEST** action. See
+[docs/SOURCES.md](docs/SOURCES.md).
 
 ## Documentation
 

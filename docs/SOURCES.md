@@ -12,12 +12,16 @@ virtual keyboard for any text field.
   progress) and also happens automatically every 15 minutes while the app
   is open, and whenever you navigate outside the already-fetched date
   range.
-- Each configured source shows its label, an **ON/OFF** toggle, and
-  **DEL**. Tapping a source's label opens it for editing. Google sources
-  additionally show a **LOG IN** button.
+- Each configured source shows its label, **TEST**, an **ON/OFF** toggle,
+  and **DEL**. **TEST** makes a real connection/fetch attempt and updates
+  that row with `OK ... EVENTS` or the returned error. Tapping the large
+  source field opens it for editing. Google sources additionally show a
+  **LOG IN** button.
 - Four **+ ...** buttons add a new source of each kind.
-- While editing, **Tab** moves keyboard focus to the next field; **SAVE**
-  commits, **CANCEL** discards. Saving an edit keeps the source's
+- While editing, tap a large bordered field to focus it; the double border
+  and `|` cursor show exactly what is being edited. **Tab** also moves
+  focus to the next field. **SAVE** commits, **CANCEL** discards. Saving
+  an edit keeps the source's
   enabled/disabled state, its last sync status, and — for Google — a
   refresh token from a previous login.
 

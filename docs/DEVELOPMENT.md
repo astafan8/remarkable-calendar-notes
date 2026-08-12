@@ -81,11 +81,17 @@ Deterministically regenerates `assets/icon.png` from code (see
 2. Tag `vX.Y.Z` and push. `.github/workflows/release.yml` cross-builds
    the armv7 binary inside `ghcr.io/toltec-dev/rust:v4.0`, packages an
    AppLoad bundle zip, attaches it (with SHA-256/512 checksums) to a
-   GitHub Release in the source repository, and mirrors the artifacts to
-   the dedicated `remarkable-calendar-notes-releases` repository.
+   GitHub Release in the public source repository, and creates a second
+   OS 3.27-only archive containing the same app plus the optional sidebar
+   QMD.
 3. Fill in the Vellum recipe's checksums from that release with
    `scripts/update-vellum-checksums.sh`.
 4. Review and clean the VELBUILD, run Vellum's own lint/build tools, and
    use `scripts/publish-vellum-testing.sh` to prepare a fork branch.
    Vellum requires the repository owner—not an automation operator—to
    inspect that branch and personally open and describe the pull request.
+
+The sidebar QMD is derived from rm-appload's GPL-3.0-only patch, lives
+under `sidebar/`, and is separately GPL-3.0-only. It must be re-authored
+and tested against a real device-generated QMLDiff hashtab before widening
+its firmware range.

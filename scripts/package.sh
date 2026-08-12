@@ -27,6 +27,8 @@ fi
 VERSION="$(grep -m1 '"version"' external.manifest.json | sed -E 's/.*"version"\s*:\s*"([^"]+)".*/\1/')"
 STAGE="dist/stage/remarkable-calendar-notes"
 OUT="dist/remarkable-calendar-notes-${VERSION}-armv7.zip"
+SIDEBAR_STAGE="dist/stage-sidebar/remarkable-calendar-notes-xovi-sidebar"
+SIDEBAR_OUT="dist/remarkable-calendar-notes-${VERSION}-xovi-sidebar.zip"
 
 rm -rf dist/stage
 mkdir -p "$STAGE"
@@ -38,9 +40,20 @@ chmod 755 "$STAGE/remarkable-calendar-notes"
 mkdir -p dist
 rm -f "$OUT"
 (cd dist/stage && zip -r -X "../../$OUT" remarkable-calendar-notes) >/dev/null
-rm -rf dist/stage
+
+rm -rf dist/stage-sidebar
+mkdir -p "$SIDEBAR_STAGE/appload" "$SIDEBAR_STAGE/qt-resource-rebuilder"
+cp -a "$STAGE" "$SIDEBAR_STAGE/appload/"
+cp sidebar/3.27/calendarNotesSidebar.qmd "$SIDEBAR_STAGE/qt-resource-rebuilder/"
+cp sidebar/README.md "$SIDEBAR_STAGE/"
+rm -f "$SIDEBAR_OUT"
+(cd dist/stage-sidebar && zip -r -X "../../$SIDEBAR_OUT" remarkable-calendar-notes-xovi-sidebar) >/dev/null
+rm -rf dist/stage dist/stage-sidebar
 
 sha256sum "$OUT" > "$OUT.sha256"
+sha512sum "$OUT" > "$OUT.sha512"
+sha256sum "$SIDEBAR_OUT" > "$SIDEBAR_OUT.sha256"
+sha512sum "$SIDEBAR_OUT" > "$SIDEBAR_OUT.sha512"
 echo "Wrote $OUT"
-echo "Wrote $OUT.sha256"
+echo "Wrote $SIDEBAR_OUT"
 cat "$OUT.sha256"

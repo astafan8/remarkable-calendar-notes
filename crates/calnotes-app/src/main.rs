@@ -209,7 +209,7 @@ mod device_loop {
                             }
                             input_kind::PEN_RELEASE => {
                                 pen_down = false;
-                                app.pen_up();
+                                needs_full_redraw |= app.pen_up();
                             }
                             // The VKB key code travels in the event's `x`
                             // field, not `d` — see calnotes_device::protocol.
