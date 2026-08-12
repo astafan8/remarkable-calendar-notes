@@ -7,8 +7,9 @@
 use crate::ink::InkStore;
 use crate::model::AppConfig;
 use crate::persistence;
+use serde::de::DeserializeOwned;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const CONFIG_FILE: &str = "config.json";
 const INK_FILE: &str = "ink.json";
@@ -16,16 +17,46 @@ const INK_FILE: &str = "ink.json";
 pub struct AppState {
     pub config: AppConfig,
     pub ink: InkStore,
+    /// Non-fatal problems encountered while loading persisted state (for
+    /// example a corrupt `config.json` that was reset to defaults). The app
+    /// logs these and surfaces a short hint on screen so a bad locally
+    /// stored file is visible rather than silently swallowed — and never
+    /// blocks startup.
+    pub load_warnings: Vec<String>,
 }
 
 impl AppState {
     /// Load persisted state from the resolved data directory, filling in
     /// defaults for anything missing (including a brand-new install).
+    ///
+    /// This never fails because of a corrupt or schema-incompatible file:
+    /// such a file is moved aside and the affected section is reset to
+    /// defaults, with a warning recorded in [`AppState::load_warnings`].
+    /// Guaranteeing a successful load is what keeps a bad locally stored
+    /// config/ink file from turning into a permanently blank screen.
     pub fn load() -> io::Result<Self> {
-        let dir = persistence::data_dir()?;
-        let config = persistence::read_json_opt(&dir.join(CONFIG_FILE))?.unwrap_or_default();
-        let ink = persistence::read_json_opt(&dir.join(INK_FILE))?.unwrap_or_default();
-        Ok(AppState { config, ink })
+        let dir = match persistence::data_dir() {
+            Ok(dir) => dir,
+            Err(e) => {
+                // Even a missing/unwritable data directory must not stop the
+                // app from starting: fall back to in-memory defaults.
+                return Ok(AppState {
+                    config: AppConfig::default(),
+                    ink: InkStore::default(),
+                    load_warnings: vec![format!(
+                        "data directory unavailable ({e}); using in-memory defaults"
+                    )],
+                });
+            }
+        };
+        let mut load_warnings = Vec::new();
+        let config = load_section(&dir.join(CONFIG_FILE), CONFIG_FILE, &mut load_warnings);
+        let ink = load_section(&dir.join(INK_FILE), INK_FILE, &mut load_warnings);
+        Ok(AppState {
+            config,
+            ink,
+            load_warnings,
+        })
     }
 
     pub fn save_config(&self) -> io::Result<()> {
@@ -44,6 +75,35 @@ impl AppState {
         let dir = persistence::data_dir()?.join("cache");
         std::fs::create_dir_all(&dir)?;
         Ok(dir.join(format!("{source_id}.json")))
+    }
+}
+
+/// Load one JSON section (config or ink), recovering to `Default` if the
+/// file is missing, corrupt, or unreadable, and appending a human-readable
+/// warning for anything worse than "missing".
+fn load_section<T: DeserializeOwned + Default>(
+    path: &Path,
+    name: &str,
+    warnings: &mut Vec<String>,
+) -> T {
+    match persistence::read_json_recovering::<T>(path) {
+        Ok(recovered) => {
+            if let Some(error) = recovered.error {
+                let backup = recovered
+                    .recovered_from
+                    .unwrap_or_else(|| "not preserved".to_string());
+                warnings.push(format!(
+                    "{name} could not be read ({error}); reset to defaults, previous file kept at {backup}"
+                ));
+            }
+            recovered.value.unwrap_or_default()
+        }
+        Err(e) => {
+            warnings.push(format!(
+                "{name} could not be accessed ({e}); using defaults"
+            ));
+            T::default()
+        }
     }
 }
 
@@ -161,6 +221,46 @@ mod tests {
                 .len(),
             1
         );
+        std::env::remove_var(persistence::DATA_DIR_ENV);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn corrupt_persisted_state_never_blocks_startup_and_is_quarantined() {
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var(persistence::DATA_DIR_ENV, dir.path());
+        // A config that was truncated/garbled by an interrupted write or an
+        // incompatible version — the exact situation that used to fail load
+        // and leave a blank screen.
+        std::fs::write(dir.path().join(CONFIG_FILE), "{ \"view_mode\": ").unwrap();
+        std::fs::write(dir.path().join(INK_FILE), "not json at all").unwrap();
+
+        let state = AppState::load().unwrap();
+
+        // Load succeeds with defaults instead of erroring.
+        assert_eq!(state.config, crate::model::AppConfig::default());
+        assert!(state.ink.days.is_empty());
+        // Two warnings: one per corrupt file, each pointing at the backup.
+        assert_eq!(state.load_warnings.len(), 2);
+        assert!(state
+            .load_warnings
+            .iter()
+            .any(|w| w.contains(CONFIG_FILE) && w.contains("reset to defaults")));
+
+        // The bad files are moved aside so the next launch can't refail.
+        assert!(!dir.path().join(CONFIG_FILE).exists());
+        assert!(!dir.path().join(INK_FILE).exists());
+        let backups = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .contains(".corrupt-")
+            })
+            .count();
+        assert_eq!(backups, 2);
         std::env::remove_var(persistence::DATA_DIR_ENV);
     }
 }

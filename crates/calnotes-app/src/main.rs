@@ -208,6 +208,30 @@ mod device_loop {
         }
         super::diagnostics::log(format_args!("startup screen published"));
 
+        // Run everything else under a panic guard: any internal failure
+        // (state, rendering, input handling) must end on a readable error
+        // screen with the log path, never a dead blank window.
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            event_loop(&mut sink, &mut fb)
+        })) {
+            Ok(code) => code,
+            Err(_) => {
+                super::diagnostics::log(format_args!(
+                    "device event loop panicked; showing error screen"
+                ));
+                show_fatal_screen(
+                    &mut sink,
+                    "UNEXPECTED ERROR",
+                    "THE APP HIT AN INTERNAL ERROR (PANIC). THE FULL DETAILS ARE IN THE LOG.",
+                )
+            }
+        }
+    }
+
+    /// The real application: load state, render, and handle input until the
+    /// AppLoad window closes. Any error returns via [`show_fatal_screen`] so
+    /// the failure and the log path are always shown on the device.
+    fn event_loop(sink: &mut QtfbSink, fb: &mut FrameBuffer) -> ExitCode {
         let mut app = match App::new() {
             Ok(app) => {
                 super::diagnostics::log(format_args!(
@@ -221,12 +245,22 @@ mod device_loop {
             Err(error) => {
                 super::diagnostics::log(format_args!("state load failed: {error}"));
                 return show_fatal_screen(
-                    &mut sink,
+                    sink,
                     "STARTUP ERROR",
                     &format!("STATE LOAD FAILED: {error}"),
                 );
             }
         };
+
+        // A corrupt/incompatible stored config or ink file is recovered to
+        // defaults rather than failing; make that visible in the log and as
+        // an on-screen status line so it is never silently swallowed.
+        for warning in &app.state.load_warnings {
+            super::diagnostics::log(format_args!("state warning: {warning}"));
+        }
+        if let Some(first) = app.state.load_warnings.first() {
+            app.status = format!("STORED SETTINGS WERE RESET: {first}");
+        }
 
         // The one and only framebuffer. It is rendered into on startup and
         // then *incrementally* modified: each pen sample draws a single
@@ -235,8 +269,8 @@ mod device_loop {
         // completed background refreshes.
         app.start_refresh();
         super::diagnostics::log(format_args!("initial source refresh started"));
-        if !redraw(&mut sink, &app, &mut fb, "initial") {
-            return show_fatal_screen(&mut sink, "DISPLAY ERROR", "CHECK DEVICE LOG");
+        if !redraw(sink, &app, fb, "initial") {
+            return show_fatal_screen(sink, "DISPLAY ERROR", "CHECK DEVICE LOG");
         }
         let mut last_refresh = Instant::now();
         let mut startup_repaints_remaining = STARTUP_REPAINT_COUNT;
@@ -260,14 +294,12 @@ mod device_loop {
                             }
                             input_kind::PEN_UPDATE if pen_down => {
                                 if let Some(segment) = app.pen_move(ev.x, ev.y, ev.pen_pressure()) {
-                                    if let Err(e) =
-                                        display::draw_segment(&mut sink, &mut fb, segment)
-                                    {
+                                    if let Err(e) = display::draw_segment(sink, fb, segment) {
                                         super::diagnostics::log(format_args!(
                                             "partial update failed: {e}"
                                         ));
                                         return show_fatal_screen(
-                                            &mut sink,
+                                            sink,
                                             "DISPLAY ERROR",
                                             "PARTIAL UPDATE FAILED",
                                         );
@@ -287,12 +319,8 @@ mod device_loop {
                             _ => {}
                         }
                     }
-                    if needs_full_redraw && !redraw(&mut sink, &app, &mut fb, "input") {
-                        return show_fatal_screen(
-                            &mut sink,
-                            "DISPLAY ERROR",
-                            "INPUT REDRAW FAILED",
-                        );
+                    if needs_full_redraw && !redraw(sink, &app, fb, "input") {
+                        return show_fatal_screen(sink, "DISPLAY ERROR", "INPUT REDRAW FAILED");
                     }
                 }
                 Err(_) => {
@@ -306,24 +334,16 @@ mod device_loop {
             // neither ever blocks this loop.
             if app.poll_background() {
                 super::diagnostics::log(format_args!("background update: {}", app.status));
-                if !redraw(&mut sink, &app, &mut fb, "background") {
-                    return show_fatal_screen(
-                        &mut sink,
-                        "DISPLAY ERROR",
-                        "BACKGROUND REDRAW FAILED",
-                    );
+                if !redraw(sink, &app, fb, "background") {
+                    return show_fatal_screen(sink, "DISPLAY ERROR", "BACKGROUND REDRAW FAILED");
                 }
             }
 
             if last_refresh.elapsed() >= AUTO_REFRESH_INTERVAL {
                 app.start_refresh();
                 super::diagnostics::log(format_args!("automatic source refresh started"));
-                if !redraw(&mut sink, &app, &mut fb, "automatic refresh") {
-                    return show_fatal_screen(
-                        &mut sink,
-                        "DISPLAY ERROR",
-                        "AUTOMATIC REDRAW FAILED",
-                    );
+                if !redraw(sink, &app, fb, "automatic refresh") {
+                    return show_fatal_screen(sink, "DISPLAY ERROR", "AUTOMATIC REDRAW FAILED");
                 }
                 last_refresh = Instant::now();
             }
@@ -331,12 +351,12 @@ mod device_loop {
             if startup_repaints_remaining > 0 && Instant::now() >= next_startup_repaint {
                 let attempt = STARTUP_REPAINT_COUNT - startup_repaints_remaining + 1;
                 if !redraw(
-                    &mut sink,
+                    sink,
                     &app,
-                    &mut fb,
+                    fb,
                     &format!("startup repaint {attempt}/{STARTUP_REPAINT_COUNT}"),
                 ) {
-                    return show_fatal_screen(&mut sink, "DISPLAY ERROR", "STARTUP REPAINT FAILED");
+                    return show_fatal_screen(sink, "DISPLAY ERROR", "STARTUP REPAINT FAILED");
                 }
                 startup_repaints_remaining -= 1;
                 next_startup_repaint += STARTUP_REPAINT_INTERVAL;

@@ -64,11 +64,49 @@ pub fn redraw<S: FrameSink>(
 
 pub fn render_fatal_screen(fb: &mut FrameBuffer, title: &str, detail: &str, log_path: &str) {
     fb.clear(calnotes_core::render::WHITE);
-    fb.draw_text(80, 200, "CALENDAR NOTES", BLACK, 6);
-    fb.draw_text(80, 340, title, BLACK, 5);
-    fb.draw_text(80, 440, &truncate(detail, 46), BLACK, 3);
-    fb.draw_text(80, 560, "COPY THE DIAGNOSTIC LOG:", BLACK, 3);
-    fb.draw_text(80, 640, &truncate(log_path, 52), BLACK, 3);
+    let left = 80;
+    let width = fb.width as i32;
+    // A visible border so even a mostly-empty error screen is unmistakably
+    // "the app drew something" rather than a dead/blank window.
+    fb.draw_rect_outline(
+        Rect {
+            x: 40,
+            y: 40,
+            w: width - 80,
+            h: fb.height as i32 - 80,
+        },
+        BLACK,
+    );
+    fb.draw_text(left, 140, "CALENDAR NOTES", BLACK, 6);
+    fb.draw_text(left, 280, title, BLACK, 5);
+
+    // The failure message, wrapped so nothing important is cut off.
+    let mut y = 400;
+    for line in wrap(detail, chars_per_line(width, left, 3)) {
+        fb.draw_text(left, y, &line, BLACK, 3);
+        y += 40;
+    }
+
+    y += 40;
+    fb.draw_text(left, y, "DETAILS WERE WRITTEN TO THE LOG FILE:", BLACK, 3);
+    y += 50;
+    // The full log path, wrapped rather than truncated — the whole point of
+    // showing it is so the user can find and share it, so it must be
+    // readable in its entirety.
+    for line in wrap(log_path, chars_per_line(width, left, 2)) {
+        fb.draw_text(left, y, &line, BLACK, 2);
+        y += 30;
+    }
+
+    y += 30;
+    fb.draw_text(
+        left,
+        y,
+        "REOPEN THE APP, OR RUN THE DIAGNOSTICS COLLECTOR",
+        BLACK,
+        2,
+    );
+    fb.draw_text(left, y + 30, "AND SHARE THE LOG TO GET HELP.", BLACK, 2);
 }
 
 pub fn render_startup_screen(fb: &mut FrameBuffer) {
@@ -88,14 +126,43 @@ pub fn render_startup_screen(fb: &mut FrameBuffer) {
     fb.draw_text(100, 480, "STARTING...", BLACK, 5);
 }
 
-fn truncate(text: &str, max_chars: usize) -> String {
+/// How many characters of `scale`-sized bitmap text fit between `left` and
+/// the right margin (a symmetric margin is assumed).
+fn chars_per_line(width: i32, left: i32, scale: i32) -> usize {
+    let usable = (width - 2 * left).max(0);
+    (usable / (4 * scale)).max(1) as usize
+}
+
+/// Split `text` (uppercased for the bitmap font) into lines no wider than
+/// `max_chars`, breaking on spaces where possible and hard-splitting any
+/// single run that is longer than a line (e.g. a long filesystem path).
+fn wrap(text: &str, max_chars: usize) -> Vec<String> {
     let upper = text.to_uppercase();
-    if upper.chars().count() <= max_chars {
-        return upper;
+    let mut lines = Vec::new();
+    for word in upper.split_whitespace() {
+        let mut word = word;
+        // Hard-split words longer than a whole line (paths, tokens).
+        while word.chars().count() > max_chars {
+            let head: String = word.chars().take(max_chars).collect();
+            lines.push(head);
+            word = &word[word
+                .char_indices()
+                .nth(max_chars)
+                .map(|(i, _)| i)
+                .unwrap_or(word.len())..];
+        }
+        match lines.last_mut() {
+            Some(last) if last.chars().count() + 1 + word.chars().count() <= max_chars => {
+                last.push(' ');
+                last.push_str(word);
+            }
+            _ => lines.push(word.to_string()),
+        }
     }
-    let mut result: String = upper.chars().take(max_chars.saturating_sub(3)).collect();
-    result.push_str("...");
-    result
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
 }
 
 /// Incremental pen update: draw one stroke segment into the framebuffer
@@ -288,6 +355,25 @@ mod tests {
             "/tmp/calendar-notes.log",
         );
         assert!(fb.non_white_pixel_count() > 1_000);
+    }
+
+    #[test]
+    fn wrap_hard_splits_a_long_path_and_preserves_every_character() {
+        let path = "/home/root/.local/share/remarkable-calendar-notes/calendar-notes.log";
+        let lines = wrap(path, 20);
+        // Each line stays within the limit...
+        assert!(lines.iter().all(|line| line.chars().count() <= 20));
+        // ...and no character of the path is lost to truncation.
+        let rejoined: String = lines.join("").replace(' ', "");
+        assert_eq!(rejoined, path.to_uppercase().replace(' ', ""));
+        assert!(lines.len() > 1);
+    }
+
+    #[test]
+    fn wrap_breaks_a_sentence_on_spaces() {
+        let lines = wrap("state could not be loaded", 12);
+        assert!(lines.len() >= 2);
+        assert!(lines.iter().all(|line| line.chars().count() <= 12));
     }
 
     #[test]

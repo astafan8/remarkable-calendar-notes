@@ -1,5 +1,29 @@
 # Collecting device diagnostics
 
+## What the app shows and records on failure
+
+Calendar Notes is designed so that a failure never leaves a silently blank
+window:
+
+- **On-screen error.** Any startup or runtime failure (including an
+  internal panic) paints a full-screen error page with a short description
+  **and the full path to the log file**, so you can find and share it.
+- **Persistent log.** Every run appends to a log file (path shown on that
+  error page, and reported by the collector below). The log records state
+  loading, QTFB connection, render results, background refresh, and panic
+  details — but never calendar text, source URLs, or credentials.
+- **Self-healing stored settings.** A corrupt or incompatible
+  `config.json`/`ink.json` (for example from an interrupted write or an
+  older/newer version) is **automatically moved aside** to
+  `<name>.corrupt-<timestamp>` and reset to defaults instead of blocking
+  startup. The app opens normally and notes the reset in the log. Your
+  moved-aside file is preserved next to it if you want to inspect it.
+
+If the app opens but behaves as if freshly installed, a stored settings
+file was likely reset — check the log for a `state warning:` line.
+
+## Collecting the log
+
 The collector runs on the **computer connected to the reMarkable**, not
 on the tablet. Connect the tablet over USB first. The default USB address
 is `10.11.99.1`; use its Wi-Fi address instead if that is how you normally
