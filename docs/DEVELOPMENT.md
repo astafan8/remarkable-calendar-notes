@@ -106,8 +106,8 @@ full-update acknowledgement, background refresh status, and panic
 details. It deliberately omits source configuration values, credentials,
 tokens, and event text.
 
-The collectors run on the computer connected to the tablet. Collect the
-current and previous logs from Windows with:
+The collectors run on the computer connected to the tablet and stream
+one archive over one SSH session. Collect diagnostics from Windows with:
 
 ```powershell
 .\scripts\collect-device-log.ps1
@@ -119,6 +119,7 @@ Or from Linux/macOS with:
 ./scripts/collect-device-log.sh
 ```
 
-Both produce a single shareable archive and fall back to
-`/tmp/calendar-notes.log` if persistent storage was unavailable. See
+Both produce a single shareable archive, locate logs outside the expected
+directory, and collect launch/permission evidence even if the app never
+created a log. See
 [`DIAGNOSTICS.md`](DIAGNOSTICS.md).

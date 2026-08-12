@@ -23,6 +23,11 @@ if [ ! -f "assets/icon.png" ]; then
   echo "error: assets/icon.png not found — run 'cargo run -p xtask -- icon'" >&2
   exit 1
 fi
+if ! command -v rcc >/dev/null 2>&1 && [ ! -x /usr/lib/qt5/bin/rcc ]; then
+  echo "error: Qt 5 rcc not found — install qtbase5-dev-tools" >&2
+  exit 1
+fi
+RCC="$(command -v rcc || echo /usr/lib/qt5/bin/rcc)"
 
 VERSION="$(grep -m1 '"version"' external.manifest.json | sed -E 's/.*"version"\s*:\s*"([^"]+)".*/\1/')"
 STAGE="dist/stage/remarkable-calendar-notes"
@@ -45,6 +50,9 @@ rm -rf dist/stage-sidebar
 mkdir -p "$SIDEBAR_STAGE/appload" "$SIDEBAR_STAGE/qt-resource-rebuilder"
 cp -a "$STAGE" "$SIDEBAR_STAGE/appload/"
 cp sidebar/3.27/calendarNotesSidebar.qmd "$SIDEBAR_STAGE/qt-resource-rebuilder/"
+"$RCC" --binary \
+  -o "$SIDEBAR_STAGE/qt-resource-rebuilder/calendarNotesSidebar.rcc" \
+  sidebar/3.27/calendarNotesSidebar.qrc
 cp sidebar/README.md "$SIDEBAR_STAGE/"
 rm -f "$SIDEBAR_OUT"
 (cd dist/stage-sidebar && zip -r -X "../../$SIDEBAR_OUT" remarkable-calendar-notes-xovi-sidebar) >/dev/null

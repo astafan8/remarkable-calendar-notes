@@ -38,15 +38,19 @@ to xochitl's normal sidebar. In short:
 1. Connect the rM2 by USB and SSH to `root@10.11.99.1`.
 2. Install Vellum, then run `vellum add appload tripletap` and
    `xovi/rebuild_hashtable`.
-3. Download and extract either the latest ARMv7 bundle or the optional
-   XOVI sidebar bundle from the public
+3. Download the latest ARMv7 bundle (or optional XOVI sidebar bundle) and
+   the matching diagnostics bundle from the public
    [main repository releases](https://github.com/astafan8/remarkable-calendar-notes/releases).
-4. From the computer, copy the extracted folder:
+4. Extract the diagnostics bundle on the computer, then install the app
+   with one SSH password prompt:
 
-   ```sh
-   scp -r remarkable-calendar-notes root@10.11.99.1:/home/root/xovi/exthome/appload/
+   ```powershell
+   .\install-device.ps1 -Bundle .\remarkable-calendar-notes-<version>-armv7.zip
    ```
 
+   The Linux/macOS equivalent is `./install-device.sh --bundle <zip>`.
+   The installer preserves the required executable permission, which a
+   Windows extract-and-copy workflow can otherwise lose.
 5. Triple-press the tablet's power button to start XOVI, open
    **AppLoad**, tap **Reload**, then open **Calendar Notes**.
 
@@ -56,10 +60,12 @@ after an OS update—are in [docs/INSTALL.md](docs/INSTALL.md).
 
 If the app fails to render, it writes a persistent diagnostic log to
 `/home/root/.local/share/remarkable-calendar-notes/calendar-notes.log`.
-Run the collector on the **computer connected to the tablet**:
+Run the collector on the **computer connected to the tablet**. It uses
+one SSH session/password prompt and still captures AppLoad launch errors
+when the app itself created no log:
 `scripts/collect-device-log.ps1` on Windows or
 `scripts/collect-device-log.sh` on Linux/macOS. Release downloads include
-a separate diagnostics bundle with both collectors. See
+a separate diagnostics bundle with the collectors and installers. See
 [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md).
 
 The source is now public, but `vellum add remarkable-calendar-notes` is

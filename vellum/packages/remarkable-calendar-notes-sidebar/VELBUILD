@@ -1,7 +1,7 @@
 maintainer="astafan8 <astafan8@users.noreply.github.com>"
 status="experimental"
 pkgname=remarkable-calendar-notes-sidebar
-pkgver=0.1.6
+pkgver=0.1.7
 pkgrel=0
 upstream_author="astafan8"
 category="ui"
@@ -13,6 +13,7 @@ depends="remarkable-calendar-notes qt-resource-rebuilder appload>=0.5.3 remarkab
 readmeurl="https://raw.githubusercontent.com/$upstream_author/remarkable-calendar-notes/v$pkgver/sidebar/README.md"
 source="
 https://raw.githubusercontent.com/$upstream_author/remarkable-calendar-notes/v$pkgver/sidebar/3.27/calendarNotesSidebar.qmd
+https://github.com/$upstream_author/remarkable-calendar-notes/releases/download/v$pkgver/calendarNotesSidebar-3.27.rcc
 https://raw.githubusercontent.com/asivery/rm-appload/v0.5.3/LICENSE
 "
 options='strip tracedeps'
@@ -20,6 +21,8 @@ options='strip tracedeps'
 package() {
 	install -Dm644 "$srcdir"/calendarNotesSidebar.qmd \
 		"$pkgdir"/home/root/xovi/exthome/qt-resource-rebuilder/calendarNotesSidebar.qmd
+	install -Dm644 "$srcdir"/calendarNotesSidebar-3.27.rcc \
+		"$pkgdir"/home/root/xovi/exthome/qt-resource-rebuilder/calendarNotesSidebar.rcc
 
 	install -Dm644 "$srcdir"/LICENSE \
 		"$pkgdir"/home/root/.vellum/licenses/$pkgname/LICENSE
@@ -28,6 +31,7 @@ package() {
 }
 
 sha512sums="
-a613dfd4c98bb06205e2eee74dda4a47c67b8b1976e1e2888230e6fb7708d8753ae7c2233b8ef7be1cd3238cf4716c6455913a7e2526edad0018565d6d147cdd  calendarNotesSidebar.qmd
-d361e5e8201481c6346ee6a886592c51265112be550d5224f1a7a6e116255c2f1ab8788df579d9b8372ed7bfd19bac4b6e70e00b472642966ab5b319b99a2686  LICENSE
+PLACEHOLDER-RUN-scripts/update-vellum-checksums.sh  calendarNotesSidebar.qmd
+PLACEHOLDER-RUN-scripts/update-vellum-checksums.sh  calendarNotesSidebar-3.27.rcc
+PLACEHOLDER-RUN-scripts/update-vellum-checksums.sh  LICENSE
 "
