@@ -15,7 +15,7 @@ jobs:
     name: fmt, clippy, test (native)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust toolchain (from rust-toolchain.toml)
         run: |
@@ -92,7 +92,7 @@ jobs:
     name: clippy/check (armv7 — real reMarkable 2 target)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install armv7 target and cross C toolchain
         run: |
