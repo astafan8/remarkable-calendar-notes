@@ -21,6 +21,7 @@ use crate::app::{App, PenSegment};
 use calnotes_core::render::{FrameBuffer, BLACK};
 use calnotes_core::view::Rect;
 use std::io;
+use std::time::Duration;
 
 /// A destination for rendered pixels: a full-frame RGB565 little-endian
 /// buffer plus the ability to ask for a full or partial screen refresh.
@@ -30,15 +31,54 @@ pub trait FrameSink {
     fn request_partial_update(&mut self, rect: Rect) -> io::Result<()>;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RedrawStats {
+    pub render_time: Duration,
+    pub source_has_non_white_pixels: bool,
+    pub shared_memory_has_non_white_bytes: bool,
+}
+
 /// Full redraw: re-render the current screen into `fb` (reusing its
 /// allocation), publish every pixel, and refresh the whole display.
 ///
 /// Used for startup, navigation, view/UI changes, and completed
 /// background refreshes — never for an individual pen sample.
-pub fn redraw<S: FrameSink>(sink: &mut S, app: &App, fb: &mut FrameBuffer) -> io::Result<()> {
+pub fn redraw<S: FrameSink>(
+    sink: &mut S,
+    app: &App,
+    fb: &mut FrameBuffer,
+) -> io::Result<RedrawStats> {
+    let started = std::time::Instant::now();
     app.render_into(fb);
+    let render_time = started.elapsed();
+    let source_has_non_white_pixels = fb.has_non_white_pixels();
     fb.write_rgb565_into(sink.pixels());
-    sink.request_full_update()
+    let shared_memory_has_non_white_bytes = sink.pixels().iter().any(|byte| *byte != 0xff);
+    sink.request_full_update()?;
+    Ok(RedrawStats {
+        render_time,
+        source_has_non_white_pixels,
+        shared_memory_has_non_white_bytes,
+    })
+}
+
+pub fn render_fatal_screen(fb: &mut FrameBuffer, title: &str, detail: &str, log_path: &str) {
+    fb.clear(calnotes_core::render::WHITE);
+    fb.draw_text(80, 200, "CALENDAR NOTES", BLACK, 6);
+    fb.draw_text(80, 340, title, BLACK, 5);
+    fb.draw_text(80, 440, &truncate(detail, 46), BLACK, 3);
+    fb.draw_text(80, 560, "COPY THE DIAGNOSTIC LOG:", BLACK, 3);
+    fb.draw_text(80, 640, &truncate(log_path, 52), BLACK, 3);
+}
+
+fn truncate(text: &str, max_chars: usize) -> String {
+    let upper = text.to_uppercase();
+    if upper.chars().count() <= max_chars {
+        return upper;
+    }
+    let mut result: String = upper.chars().take(max_chars.saturating_sub(3)).collect();
+    result.push_str("...");
+    result
 }
 
 /// Incremental pen update: draw one stroke segment into the framebuffer
@@ -130,8 +170,10 @@ mod tests {
             app.set_view_mode(ViewMode::Day);
             let mut fb = FrameBuffer::new(CANVAS_W as usize, CANVAS_H as usize);
             let mut sink = MemorySink::new(CANVAS_W as usize, CANVAS_H as usize);
-            redraw(&mut sink, &app, &mut fb).unwrap();
+            let stats = redraw(&mut sink, &app, &mut fb).unwrap();
             assert_eq!(sink.full_updates, 1);
+            assert!(stats.source_has_non_white_pixels);
+            assert!(stats.shared_memory_has_non_white_bytes);
 
             // Everything the full redraw wrote is now the baseline.
             let baseline = sink.pixels.clone();
@@ -217,5 +259,17 @@ mod tests {
             assert!(result.is_none());
             assert!(sink.partial_updates.is_empty());
         });
+    }
+
+    #[test]
+    fn fatal_screen_is_visibly_non_white_and_includes_diagnostic_content() {
+        let mut fb = FrameBuffer::new(CANVAS_W as usize, CANVAS_H as usize);
+        render_fatal_screen(
+            &mut fb,
+            "STARTUP ERROR",
+            "state could not be loaded",
+            "/tmp/calendar-notes.log",
+        );
+        assert!(fb.non_white_pixel_count() > 1_000);
     }
 }

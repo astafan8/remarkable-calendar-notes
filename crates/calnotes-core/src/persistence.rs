@@ -25,6 +25,7 @@ pub fn data_dir() -> io::Result<PathBuf> {
     } else {
         let home = std::env::var_os("HOME")
             .or_else(|| std::env::var_os("USERPROFILE"))
+            .or_else(device_home_fallback)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no HOME/USERPROFILE set"))?;
         Path::new(&home)
             .join(".local")
@@ -33,6 +34,17 @@ pub fn data_dir() -> io::Result<PathBuf> {
     };
     fs::create_dir_all(&dir)?;
     Ok(dir)
+}
+
+fn device_home_fallback() -> Option<std::ffi::OsString> {
+    #[cfg(target_os = "linux")]
+    {
+        Some("/home/root".into())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
 }
 
 /// Write `value` as pretty JSON to `path` atomically: serialize to a sibling

@@ -1898,6 +1898,28 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    fn calendar_and_settings_screens_render_substantial_visible_chrome() {
+        with_temp_data_dir(|| {
+            let mut app = App::new().unwrap();
+            for mode in ViewMode::ALL {
+                app.set_view_mode(mode);
+                let non_white = app.render().non_white_pixel_count();
+                assert!(
+                    non_white > 10_000,
+                    "{mode:?} rendered only {non_white} non-white pixels"
+                );
+            }
+            app.screen = Screen::Settings;
+            let non_white = app.render().non_white_pixel_count();
+            assert!(
+                non_white > 10_000,
+                "settings rendered only {non_white} non-white pixels"
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn pen_input_above_toolbar_is_ignored() {
         with_temp_data_dir(|| {
             let mut app = App::new().unwrap();

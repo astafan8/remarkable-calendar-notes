@@ -95,3 +95,19 @@ The sidebar QMD is derived from rm-appload's GPL-3.0-only patch, lives
 under `sidebar/`, and is separately GPL-3.0-only. It must be re-authored
 and tested against a real device-generated QMLDiff hashtab before widening
 its firmware range.
+
+## Device diagnostics
+
+Every run appends to
+`~/.local/share/remarkable-calendar-notes/calendar-notes.log` and rotates
+it at 1 MiB. The device loop records state-loading, QTFB connection,
+render completion time, non-white pixel count, shared-memory publication,
+full-update acknowledgement, background refresh status, and panic
+details. It deliberately omits source configuration values, credentials,
+tokens, and event text.
+
+Collect the current and previous logs from Windows with:
+
+```powershell
+.\scripts\collect-device-log.ps1
+```

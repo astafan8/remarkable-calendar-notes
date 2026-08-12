@@ -49,6 +49,18 @@ impl FrameBuffer {
         self.pixels.fill(gray_to_rgb565(gray));
     }
 
+    /// Number of pixels that are not pure white, useful for startup
+    /// diagnostics when a device reports an apparently blank framebuffer.
+    pub fn non_white_pixel_count(&self) -> usize {
+        let white = gray_to_rgb565(WHITE);
+        self.pixels.iter().filter(|pixel| **pixel != white).count()
+    }
+
+    pub fn has_non_white_pixels(&self) -> bool {
+        let white = gray_to_rgb565(WHITE);
+        self.pixels.iter().any(|pixel| *pixel != white)
+    }
+
     pub fn set_pixel(&mut self, x: i32, y: i32, gray: u8) {
         if x < 0 || y < 0 || x as usize >= self.width || y as usize >= self.height {
             return;

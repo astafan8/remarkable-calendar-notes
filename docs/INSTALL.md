@@ -128,6 +128,23 @@ Google and iCloud setup need additional provider-specific details; see
 - **No Calendar Notes sidebar icon:** the optional QMD is OS 3.27-only.
   Confirm the file is in `exthome/qt-resource-rebuilder`, then rerun
   `xovi/rebuild_hashtable` and restart XOVI.
+- **Blank Calendar Notes window:** releases 0.1.5 and newer show a visible
+  startup error when state loading or the first framebuffer update fails,
+  and always write a device log. On Windows, from this repository run:
+
+  ```powershell
+  .\scripts\collect-device-log.ps1
+  ```
+
+  Or copy it directly:
+
+  ```sh
+  scp root@10.11.99.1:/home/root/.local/share/remarkable-calendar-notes/calendar-notes.log .
+  ```
+
+  The log records startup stages, render duration/non-white pixel count,
+  QTFB connection/update results, background status, and panics. It does
+  not log calendar credentials or event contents.
 - **Calendar Notes is missing in AppLoad:** tap **Reload** and verify that
   `/home/root/xovi/exthome/appload/remarkable-calendar-notes/` contains
   the binary and `external.manifest.json`.
