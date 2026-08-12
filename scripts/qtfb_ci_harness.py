@@ -198,6 +198,11 @@ def capture(args: argparse.Namespace) -> None:
                     f"captured {screenshot} ({WIDTH}x{HEIGHT}, "
                     f"{non_white} non-white pixels)"
                 )
+                # Keep the host connected long enough for all fixed startup
+                # repaints to complete. Closing immediately after capture can
+                # race the next retry and turn an otherwise successful test
+                # into an artificial broken-pipe failure.
+                time.sleep(args.post_capture_delay)
                 break
             else:
                 raise TimeoutError("timed out waiting for a full QTFB update")
@@ -258,9 +263,17 @@ def main() -> int:
         default=0,
         help="Ignore this many initial full updates to exercise startup recovery",
     )
+    parser.add_argument(
+        "--post-capture-delay",
+        type=float,
+        default=2.0,
+        help="Seconds to keep QTFB connected after capturing the frame",
+    )
     args = parser.parse_args()
     if args.drop_full_updates < 0:
         parser.error("--drop-full-updates must be non-negative")
+    if args.post_capture_delay < 0:
+        parser.error("--post-capture-delay must be non-negative")
     try:
         capture(args)
     except (OSError, RuntimeError, TimeoutError, ValueError) as error:
