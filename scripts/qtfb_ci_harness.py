@@ -128,6 +128,7 @@ def capture(args: argparse.Namespace) -> None:
     connection: socket.socket | None = None
     output_captured = False
     started = time.monotonic()
+    full_updates = 0
 
     try:
         if SOCKET_PATH.exists():
@@ -175,6 +176,13 @@ def capture(args: argparse.Namespace) -> None:
                     continue
                 mode, _ = parse_update(packet)
                 if mode != UPDATE_ALL:
+                    continue
+                full_updates += 1
+                if full_updates <= args.drop_full_updates:
+                    print(
+                        f"dropped full update {full_updates}/"
+                        f"{args.drop_full_updates} to simulate AppLoad attachment"
+                    )
                     continue
                 shared.seek(0)
                 frame = shared.read(FRAME_BYTES)
@@ -244,7 +252,15 @@ def main() -> int:
         help="Optional emulator dynamic-loader root (passed as -L)",
     )
     parser.add_argument("--timeout", type=float, default=30.0)
+    parser.add_argument(
+        "--drop-full-updates",
+        type=int,
+        default=0,
+        help="Ignore this many initial full updates to exercise startup recovery",
+    )
     args = parser.parse_args()
+    if args.drop_full_updates < 0:
+        parser.error("--drop-full-updates must be non-negative")
     try:
         capture(args)
     except (OSError, RuntimeError, TimeoutError, ValueError) as error:

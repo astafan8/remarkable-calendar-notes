@@ -75,7 +75,8 @@ jobs:
             --manifest target/qtfb-ci/bundle/external.manifest.json \
             --screenshot target/qtfb-ci/calendar-notes.ppm \
             --data-dir target/qtfb-ci/data \
-            --process-log target/qtfb-ci/process.log
+            --process-log target/qtfb-ci/process.log \
+            --drop-full-updates 2
 
       - name: Upload QTFB screenshot and logs
         if: always()
@@ -140,7 +141,8 @@ jobs:
             --data-dir target/qtfb-arm-ci/data \
             --process-log target/qtfb-arm-ci/process.log \
             --emulator /usr/bin/qemu-arm \
-            --sysroot /usr/arm-linux-gnueabihf
+            --sysroot /usr/arm-linux-gnueabihf \
+            --drop-full-updates 2
 
       - name: Upload ARM QTFB screenshot and logs
         if: always()
