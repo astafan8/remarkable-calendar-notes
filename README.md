@@ -89,6 +89,9 @@ keyboard. Each source has a **TEST** action. See
   protocol notes, rendering pipeline.
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — building, testing, the
   desktop `preview` command, releasing.
+- [docs/CI_DEVICE_EMULATION.md](docs/CI_DEVICE_EMULATION.md) — why full
+  firmware emulation is not required CI, and the protocol-faithful QTFB
+  screenshot harness used instead.
 - [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md) — collecting device logs
   from a Windows, Linux, or macOS computer.
 - [docs/SOURCES.md](docs/SOURCES.md) — configuring calendar sources
