@@ -121,7 +121,7 @@ jobs:
     needs: build-armv7
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: remarkable-calendar-notes-armv7
           path: dist
