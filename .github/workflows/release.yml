@@ -57,6 +57,15 @@ jobs:
             dist/stage-sidebar/remarkable-calendar-notes-xovi-sidebar/qt-resource-rebuilder/
           cp sidebar/README.md \
             dist/stage-sidebar/remarkable-calendar-notes-xovi-sidebar/
+          mkdir -p dist/stage-diagnostics/remarkable-calendar-notes-diagnostics
+          cp scripts/collect-device-log.ps1 \
+            dist/stage-diagnostics/remarkable-calendar-notes-diagnostics/
+          cp scripts/collect-device-log.sh \
+            dist/stage-diagnostics/remarkable-calendar-notes-diagnostics/
+          cp docs/DIAGNOSTICS.md \
+            dist/stage-diagnostics/remarkable-calendar-notes-diagnostics/README.md
+          chmod 755 \
+            dist/stage-diagnostics/remarkable-calendar-notes-diagnostics/collect-device-log.sh
 
       - name: Package AppLoad bundle
         shell: bash
@@ -82,6 +91,10 @@ jobs:
           (cd dist/stage-sidebar && zip -r -X "../../$sidebar_out" remarkable-calendar-notes-xovi-sidebar)
           sha256sum "$sidebar_out" > "$sidebar_out.sha256"
           sha512sum "$sidebar_out" > "$sidebar_out.sha512"
+          diagnostics_out="dist/remarkable-calendar-notes-${version}-diagnostics.zip"
+          (cd dist/stage-diagnostics && zip -r -X "../../$diagnostics_out" remarkable-calendar-notes-diagnostics)
+          sha256sum "$diagnostics_out" > "$diagnostics_out.sha256"
+          sha512sum "$diagnostics_out" > "$diagnostics_out.sha512"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -115,6 +128,9 @@ jobs:
             - `*-armv7.zip`: standard AppLoad application.
             - `*-xovi-sidebar.zip`: the same app plus an optional,
               firmware-pinned OS 3.27 xochitl sidebar launcher.
+            - `*-diagnostics.zip`: host-side log collectors for Windows,
+              Linux, and macOS. Run these on the computer connected to
+              the tablet, not on the reMarkable itself.
 
             **Vellum**: this release is not automatically published to
             Vellum. See `scripts/publish-vellum-testing.sh` and

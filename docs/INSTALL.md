@@ -130,17 +130,29 @@ Google and iCloud setup need additional provider-specific details; see
   `xovi/rebuild_hashtable` and restart XOVI.
 - **Blank Calendar Notes window:** releases 0.1.5 and newer show a visible
   startup error when state loading or the first framebuffer update fails,
-  and always write a device log. On Windows, from this repository run:
+  and write a device log. Download the release's `-diagnostics.zip`,
+  extract it on the **computer connected to the tablet**, and run:
 
   ```powershell
-  .\scripts\collect-device-log.ps1
+  .\collect-device-log.ps1
   ```
 
-  Or copy it directly:
+  On Linux or macOS:
+
+  ```sh
+  chmod +x collect-device-log.sh
+  ./collect-device-log.sh
+  ```
+
+  Or copy the essential log directly from the computer:
 
   ```sh
   scp root@10.11.99.1:/home/root/.local/share/remarkable-calendar-notes/calendar-notes.log .
   ```
+
+  If the app had to use its temporary fallback, copy
+  `/tmp/calendar-notes.log` instead. Full instructions are in
+  [DIAGNOSTICS.md](DIAGNOSTICS.md).
 
   The log records startup stages, render duration/non-white pixel count,
   QTFB connection/update results, background status, and panics. It does

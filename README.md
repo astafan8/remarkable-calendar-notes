@@ -56,8 +56,11 @@ after an OS update—are in [docs/INSTALL.md](docs/INSTALL.md).
 
 If the app fails to render, it writes a persistent diagnostic log to
 `/home/root/.local/share/remarkable-calendar-notes/calendar-notes.log`.
-On Windows, `scripts/collect-device-log.ps1` copies it into a folder that
-can be attached to a bug report.
+Run the collector on the **computer connected to the tablet**:
+`scripts/collect-device-log.ps1` on Windows or
+`scripts/collect-device-log.sh` on Linux/macOS. Release downloads include
+a separate diagnostics bundle with both collectors. See
+[docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md).
 
 The source is now public, but `vellum add remarkable-calendar-notes` is
 still not available until the repository owner personally reviews and
@@ -80,6 +83,8 @@ keyboard. Each source has a **TEST** action. See
   protocol notes, rendering pipeline.
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — building, testing, the
   desktop `preview` command, releasing.
+- [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md) — collecting device logs
+  from a Windows, Linux, or macOS computer.
 - [docs/SOURCES.md](docs/SOURCES.md) — configuring calendar sources
   in-app.
 - [docs/SECURITY.md](docs/SECURITY.md) — the plaintext-at-rest credential
