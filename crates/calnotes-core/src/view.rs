@@ -44,53 +44,57 @@ pub fn layout(view: ViewMode, anchor: NaiveDate, canvas_w: i32, canvas_h: i32) -
             },
             in_focus_period: true,
         }],
-        ViewMode::Week => row_of_days(week_start(anchor), 7, canvas_w, canvas_h),
-        ViewMode::WorkWeek => row_of_days(week_start(anchor), 5, canvas_w, canvas_h),
-        ViewMode::TwoWeeks => {
-            let start = week_start(anchor);
-            let mut cells = row_of_days_in_band(start, 7, canvas_w, 0, canvas_h / 2);
-            cells.extend(row_of_days_in_band(
-                start + Duration::days(7),
-                7,
-                canvas_w,
-                canvas_h / 2,
-                canvas_h - canvas_h / 2,
-            ));
-            cells
-        }
+        ViewMode::Week => grid_of_days(week_start(anchor), 7, 3, canvas_w, canvas_h),
+        ViewMode::WorkWeek => grid_of_days(week_start(anchor), 5, 3, canvas_w, canvas_h),
+        ViewMode::TwoWeeks => grid_of_days(week_start(anchor), 14, 4, canvas_w, canvas_h),
         ViewMode::Month => month_grid(anchor, canvas_w, canvas_h),
     }
 }
 
-fn row_of_days(start: NaiveDate, count: i32, canvas_w: i32, canvas_h: i32) -> Vec<DateCell> {
-    row_of_days_in_band(start, count, canvas_w, 0, canvas_h)
-}
-
-fn row_of_days_in_band(
+fn grid_of_days(
     start: NaiveDate,
     count: i32,
+    columns: i32,
     canvas_w: i32,
-    band_y: i32,
-    band_h: i32,
+    canvas_h: i32,
 ) -> Vec<DateCell> {
     let mut cells = Vec::with_capacity(count as usize);
-    let base_w = canvas_w / count;
-    let mut x = 0;
+    let rows = (count + columns - 1) / columns;
+    let base_w = canvas_w / columns;
+    let base_h = canvas_h / rows;
     for i in 0..count {
-        // Give the last column any leftover pixels from integer division so
-        // cells always tile the full canvas width with no gap or overhang.
-        let w = if i == count - 1 { canvas_w - x } else { base_w };
+        let column = i % columns;
+        let row = i / columns;
+        let items_in_row = if row == rows - 1 {
+            count - row * columns
+        } else {
+            columns
+        };
+        let row_offset = if items_in_row < columns {
+            (columns - items_in_row) * base_w / 2
+        } else {
+            0
+        };
+        let w = if column == columns - 1 {
+            canvas_w - base_w * (columns - 1)
+        } else {
+            base_w
+        };
+        let h = if row == rows - 1 {
+            canvas_h - base_h * (rows - 1)
+        } else {
+            base_h
+        };
         cells.push(DateCell {
             date: start + Duration::days(i as i64),
             rect: Rect {
-                x,
-                y: band_y,
+                x: row_offset + column * base_w,
+                y: row * base_h,
                 w,
-                h: band_h,
+                h,
             },
             in_focus_period: true,
         });
-        x += w;
     }
     cells
 }
@@ -211,17 +215,47 @@ pub fn cell_at(cells: &[DateCell], px: i32, py: i32) -> Option<&DateCell> {
     })
 }
 
-/// Convert an absolute point into coordinates normalized `[0,1]` within
-/// `rect`, clamping to the rect's bounds.
+/// The largest centered 3:4 writing surface that fits inside `rect`.
+///
+/// Every calendar view uses this same canonical aspect ratio for ink.
+/// Cells may letterbox a little, but handwriting is never stretched
+/// independently on the X and Y axes when changing views.
+pub fn ink_rect(rect: Rect) -> Rect {
+    const ASPECT_W: i32 = 3;
+    const ASPECT_H: i32 = 4;
+    if rect.w * ASPECT_H > rect.h * ASPECT_W {
+        let w = (rect.h * ASPECT_W / ASPECT_H).max(1);
+        Rect {
+            x: rect.x + (rect.w - w) / 2,
+            y: rect.y,
+            w,
+            h: rect.h.max(1),
+        }
+    } else {
+        let h = (rect.w * ASPECT_H / ASPECT_W).max(1);
+        Rect {
+            x: rect.x,
+            y: rect.y + (rect.h - h) / 2,
+            w: rect.w.max(1),
+            h,
+        }
+    }
+}
+
+/// Convert an absolute point into canonical ink coordinates normalized
+/// `[0,1]`, clamping points in the letterboxed margin to the writing
+/// surface's nearest edge.
 pub fn normalize_within(rect: Rect, px: i32, py: i32) -> (f32, f32) {
+    let rect = ink_rect(rect);
     let nx = ((px - rect.x) as f32 / rect.w.max(1) as f32).clamp(0.0, 1.0);
     let ny = ((py - rect.y) as f32 / rect.h.max(1) as f32).clamp(0.0, 1.0);
     (nx, ny)
 }
 
 /// Inverse of [`normalize_within`]: map a normalized point back to absolute
-/// pixel coordinates within `rect`.
+/// pixel coordinates within `rect`'s canonical writing surface.
 pub fn denormalize_within(rect: Rect, nx: f32, ny: f32) -> (i32, i32) {
+    let rect = ink_rect(rect);
     let px = rect.x + (nx.clamp(0.0, 1.0) * rect.w as f32).round() as i32;
     let py = rect.y + (ny.clamp(0.0, 1.0) * rect.h as f32).round() as i32;
     (px, py)
@@ -252,14 +286,15 @@ mod tests {
     }
 
     #[test]
-    fn week_view_has_seven_cells_starting_monday_tiling_full_width() {
+    fn week_view_has_seven_cells_starting_monday_in_a_compact_grid() {
         // 2026-03-18 is a Wednesday.
         let cells = layout(ViewMode::Week, d(2026, 3, 18), 1400, 200);
         assert_eq!(cells.len(), 7);
         assert_eq!(cells[0].date, d(2026, 3, 16)); // Monday
         assert_eq!(cells[6].date, d(2026, 3, 22)); // Sunday
-        let total_w: i32 = cells.iter().map(|c| c.rect.w).sum();
-        assert_eq!(total_w, 1400);
+        assert_eq!(cells[0].rect.y, 0);
+        assert_eq!(cells[3].rect.y, 200 / 3);
+        assert_eq!(cells[6].rect.y, 2 * (200 / 3));
     }
 
     #[test]
@@ -267,14 +302,16 @@ mod tests {
         let cells = layout(ViewMode::WorkWeek, d(2026, 3, 18), 1400, 200);
         assert_eq!(cells.len(), 5);
         assert_eq!(cells[4].date.weekday(), Weekday::Fri);
+        assert_eq!(cells[3].rect.y, 100);
     }
 
     #[test]
-    fn two_weeks_view_has_fourteen_cells_in_two_bands() {
+    fn two_weeks_view_has_fourteen_cells_in_a_four_column_grid() {
         let cells = layout(ViewMode::TwoWeeks, d(2026, 3, 18), 1400, 400);
         assert_eq!(cells.len(), 14);
         assert_eq!(cells[0].rect.y, 0);
-        assert_eq!(cells[7].rect.y, 200);
+        assert_eq!(cells[4].rect.y, 100);
+        assert_eq!(cells[12].rect.y, 300);
         assert_eq!(cells[13].date, cells[0].date + Duration::days(13));
     }
 
@@ -300,14 +337,41 @@ mod tests {
     #[test]
     fn cell_at_finds_the_containing_cell_and_normalizes_a_point_within_it() {
         let cells = layout(ViewMode::Week, d(2026, 3, 18), 1400, 200);
-        let cell = cell_at(&cells, 100, 100).unwrap();
+        let cell = cell_at(&cells, 250, 30).unwrap();
         assert_eq!(cell.date, d(2026, 3, 16));
-        let (nx, ny) = normalize_within(cell.rect, 100, 100);
+        let (nx, ny) = normalize_within(cell.rect, 250, 30);
         assert!((0.0..=1.0).contains(&nx));
         assert!((0.0..=1.0).contains(&ny));
         let (px, py) = denormalize_within(cell.rect, nx, ny);
-        assert!((px - 100).abs() <= 1);
-        assert!((py - 100).abs() <= 1);
+        assert!((px - 250).abs() <= 1);
+        assert!((py - 30).abs() <= 1);
+    }
+
+    #[test]
+    fn ink_mapping_preserves_one_aspect_ratio_in_differently_shaped_cells() {
+        let wide = Rect {
+            x: 0,
+            y: 0,
+            w: 1200,
+            h: 800,
+        };
+        let tall = Rect {
+            x: 0,
+            y: 0,
+            w: 300,
+            h: 900,
+        };
+        let wide_ink = ink_rect(wide);
+        let tall_ink = ink_rect(tall);
+        assert_eq!(wide_ink.w * 4, wide_ink.h * 3);
+        assert_eq!(tall_ink.w * 4, tall_ink.h * 3);
+
+        let wide_dx = denormalize_within(wide, 1.0, 0.5).0 - denormalize_within(wide, 0.0, 0.5).0;
+        let wide_dy = denormalize_within(wide, 0.5, 1.0).1 - denormalize_within(wide, 0.5, 0.0).1;
+        let tall_dx = denormalize_within(tall, 1.0, 0.5).0 - denormalize_within(tall, 0.0, 0.5).0;
+        let tall_dy = denormalize_within(tall, 0.5, 1.0).1 - denormalize_within(tall, 0.5, 0.0).1;
+        assert_eq!(wide_dx * 4, wide_dy * 3);
+        assert_eq!(tall_dx * 4, tall_dy * 3);
     }
 
     #[test]

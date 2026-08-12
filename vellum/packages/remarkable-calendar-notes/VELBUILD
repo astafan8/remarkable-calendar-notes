@@ -1,12 +1,12 @@
 maintainer="astafan8 <astafan8@users.noreply.github.com>"
 status="experimental"
 pkgname=remarkable-calendar-notes
-pkgver=0.1.3
+pkgver=0.1.4
 pkgrel=0
 upstream_author="astafan8"
 category="apps"
 pkgdesc="Read-only calendar (Day/Week/Work Week/Two Weeks/Month) with persistent handwritten notes per date, via AppLoad"
-url="https://github.com/astafan8/remarkable-calendar-notes-releases"
+url="https://github.com/astafan8/remarkable-calendar-notes"
 arch="armv7"
 license="MIT"
 # reMarkable 2 only. Vellum's device gating is expressed as exclusions of
@@ -15,10 +15,10 @@ license="MIT"
 # 1404x1872 QTFB framebuffer, and is not built or tested for the
 # reMarkable 1, Paper Pro, Paper Pro Move, or Paper Pure.
 depends="appload>=0.5.3 remarkable-os>=3.26 remarkable-os<3.28 !rm1 !rmpp !rmppm !rmppure"
-readmeurl="https://raw.githubusercontent.com/$upstream_author/remarkable-calendar-notes-releases/v$pkgver/README.md"
+readmeurl="https://raw.githubusercontent.com/$upstream_author/remarkable-calendar-notes/v$pkgver/README.md"
 source="
-https://github.com/$upstream_author/remarkable-calendar-notes-releases/releases/download/v$pkgver/remarkable-calendar-notes-$pkgver-armv7.zip
-https://raw.githubusercontent.com/$upstream_author/remarkable-calendar-notes-releases/v$pkgver/LICENSE
+https://github.com/$upstream_author/remarkable-calendar-notes/releases/download/v$pkgver/remarkable-calendar-notes-$pkgver-armv7.zip
+https://raw.githubusercontent.com/$upstream_author/remarkable-calendar-notes/v$pkgver/LICENSE
 "
 options="!check !fhs"
 
@@ -36,7 +36,7 @@ package() {
 
 	install -Dm644 "$srcdir"/LICENSE \
 		"$pkgdir"/home/root/.vellum/licenses/$pkgname/LICENSE
-	echo "https://github.com/$upstream_author/remarkable-calendar-notes-releases" > \
+	echo "https://github.com/$upstream_author/remarkable-calendar-notes" > \
 		"$pkgdir"/home/root/.vellum/licenses/$pkgname/SOURCES
 }
 
@@ -49,10 +49,9 @@ predeinstall() {
 	fi
 }
 
-# Generated from the public v0.1.3 distribution release by
-# scripts/update-vellum-checksums.sh. Regenerate whenever pkgver or source=
-# changes; repository checks require real 128-character SHA-512 digests.
+# Replace these explicit placeholders from the published v0.1.4 release
+# with scripts/update-vellum-checksums.sh before proposing the recipe.
 sha512sums="
-477f025b6ff02c7b4dbce88f62995f5bf017f6950ee5193cd0b84a591b97eb7ca9c0b71fb1ec46a891a1ca829aa3a443e0da825930f2de991edfbd241d28be58  remarkable-calendar-notes-0.1.3-armv7.zip
-9f39ea5e24a0eaf3f0e3217170cded95184fe8a6f179d4d19c4c11c110e5be135be23d7edb0b3cec093d1a4ea93ffec753f4b8fcf9b0ac1fc5856f7a95f13773  LICENSE
+PLACEHOLDER-RUN-scripts/update-vellum-checksums.sh  remarkable-calendar-notes-0.1.4-armv7.zip
+PLACEHOLDER-RUN-scripts/update-vellum-checksums.sh  LICENSE
 "

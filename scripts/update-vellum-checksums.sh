@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Fills in the sha512sums of vellum/packages/remarkable-calendar-notes/VELBUILD
-# from a published GitHub Release of this repository.
+# Fills in both Calendar Notes VELBUILD sha512sums from published sources.
 #
 # The VELBUILD ships explicit `PLACEHOLDER-...` markers rather than
 # zeroed-out or invented digests, so nothing can mistake an unreleased
@@ -17,9 +16,10 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 VELBUILD="vellum/packages/remarkable-calendar-notes/VELBUILD"
+SIDEBAR_VELBUILD="vellum/packages/remarkable-calendar-notes-sidebar/VELBUILD"
 PKGVER="${1:-$(sed -n 's/^pkgver=//p' "$VELBUILD")}"
 UPSTREAM="$(sed -n 's/^upstream_author=//p' "$VELBUILD" | tr -d '"')"
-DIST_REPO="remarkable-calendar-notes-releases"
+DIST_REPO="remarkable-calendar-notes"
 BASE="https://github.com/${UPSTREAM}/${DIST_REPO}"
 
 ZIP="remarkable-calendar-notes-${PKGVER}-armv7.zip"
@@ -54,6 +54,36 @@ if grep -q 'PLACEHOLDER-' "$VELBUILD.tmp"; then
 fi
 mv "$VELBUILD.tmp" "$VELBUILD"
 
+SIDEBAR_QMD="calendarNotesSidebar.qmd"
+curl -fsSL -o "$WORK/$SIDEBAR_QMD" \
+  "https://raw.githubusercontent.com/${UPSTREAM}/${DIST_REPO}/v${PKGVER}/sidebar/3.27/${SIDEBAR_QMD}"
+curl -fsSL -o "$WORK/GPL-LICENSE" \
+  "https://raw.githubusercontent.com/asivery/rm-appload/v0.5.3/LICENSE"
+QMD_SUM="$(sha512sum "$WORK/$SIDEBAR_QMD" | cut -d' ' -f1)"
+GPL_SUM="$(sha512sum "$WORK/GPL-LICENSE" | cut -d' ' -f1)"
+
+echo "==> Rewriting $SIDEBAR_VELBUILD sha512sums"
+awk -v qmd_name="$SIDEBAR_QMD" -v qmd_sum="$QMD_SUM" -v lic_sum="$GPL_SUM" '
+  /^sha512sums="/ {
+    print "sha512sums=\"";
+    print qmd_sum "  " qmd_name;
+    print lic_sum "  LICENSE";
+    in_block = 1;
+    next
+  }
+  in_block && /^"$/ { print "\""; in_block = 0; next }
+  in_block { next }
+  { print }
+' "$SIDEBAR_VELBUILD" > "$SIDEBAR_VELBUILD.tmp"
+
+if grep -q 'PLACEHOLDER-' "$SIDEBAR_VELBUILD.tmp"; then
+  rm -f "$SIDEBAR_VELBUILD.tmp"
+  echo "error: failed to replace $SIDEBAR_VELBUILD checksums" >&2
+  exit 1
+fi
+mv "$SIDEBAR_VELBUILD.tmp" "$SIDEBAR_VELBUILD"
+
 echo "==> Done. Verify with:"
 echo "    grep -A3 '^sha512sums=' $VELBUILD"
+echo "    grep -A3 '^sha512sums=' $SIDEBAR_VELBUILD"
 echo "Only after this step is the recipe buildable by Vellum's own tooling."

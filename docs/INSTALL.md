@@ -1,8 +1,8 @@
 # Install
 
 These steps are for a **reMarkable 2 running OS 3.26 or 3.27**. The app
-has not yet been exercised on the author's physical tablet, so treat the
-first install as experimental.
+has been exercised on a physical reMarkable 2 running 3.27, but remains
+an experimental community app.
 
 ## 1. Connect to the tablet
 
@@ -44,10 +44,16 @@ reboot.
 
 On the computer—not inside the SSH session—download these two files from
 the latest public
-[release](https://github.com/astafan8/remarkable-calendar-notes-releases/releases):
+[release](https://github.com/astafan8/remarkable-calendar-notes/releases):
 
 - `remarkable-calendar-notes-<version>-armv7.zip`
 - `remarkable-calendar-notes-<version>-armv7.zip.sha256`
+
+For reMarkable OS **3.27.x** only, you may instead download
+`remarkable-calendar-notes-<version>-xovi-sidebar.zip` and its `.sha256`.
+That archive contains the same AppLoad application plus an optional
+QMLDiff launcher that adds **Calendar Notes** to xochitl's normal sidebar.
+Do not install that companion on 3.26 or a future firmware version.
 
 On Windows, verify the downloaded ZIP:
 
@@ -71,6 +77,31 @@ scp -r remarkable-calendar-notes root@10.11.99.1:/home/root/xovi/exthome/appload
 Use the Wi-Fi IP instead of `10.11.99.1` if that is how SSH worked in
 step 1.
 
+### Optional: install the OS 3.27 sidebar launcher
+
+If you downloaded the `-xovi-sidebar.zip`, extract it and copy both
+payloads:
+
+```sh
+scp -r remarkable-calendar-notes-xovi-sidebar/appload/remarkable-calendar-notes root@10.11.99.1:/home/root/xovi/exthome/appload/
+scp remarkable-calendar-notes-xovi-sidebar/qt-resource-rebuilder/calendarNotesSidebar.qmd root@10.11.99.1:/home/root/xovi/exthome/qt-resource-rebuilder/
+ssh root@10.11.99.1 xovi/rebuild_hashtable
+```
+
+Restart XOVI/xochitl afterward. Calendar Notes will still be present in
+AppLoad, and will additionally have its own sidebar icon. The icon
+launches the same external AppLoad application directly.
+
+If xochitl fails to load correctly, SSH in and run:
+
+```sh
+rm /home/root/xovi/exthome/qt-resource-rebuilder/calendarNotesSidebar.qmd
+xovi/rebuild_hashtable
+```
+
+Then restart XOVI/xochitl. This recovery risk is why the standard AppLoad
+bundle remains the default recommendation.
+
 ## 5. Start and try the app
 
 1. Triple-press the tablet's power button to start XOVI. The normal
@@ -78,10 +109,12 @@ step 1.
 2. Open **AppLoad**, tap **Reload**, then tap **Calendar Notes**.
 3. Tap **SET** in Calendar Notes to configure the UTC offset and a
    calendar source.
-4. For the quickest test, choose **+ ICS URL** and enter an HTTPS `.ics`
-   subscription URL. Tap AppLoad's keyboard button in the window chrome
-   whenever a text field needs input.
-5. Return to the calendar and write in a day cell with the Marker. Change
+4. For the quickest test, choose **+ URL**, tap each large field and enter
+   an HTTPS `.ics` subscription URL. Tap AppLoad's keyboard button in the
+   window chrome when the app asks for text, then tap **TEST** on the
+   saved source row.
+5. Return to the calendar and write in a day cell with **PEN**. Try
+   **ERASE** and **LASSO**, then change
    between Day, Week, Work Week, Two Weeks, and Month to confirm that the
    same date's note follows it.
 
@@ -92,6 +125,9 @@ Google and iCloud setup need additional provider-specific details; see
 
 - **No AppLoad sidebar item:** XOVI is not running. Triple-press power or
   SSH in and run `xovi/start`.
+- **No Calendar Notes sidebar icon:** the optional QMD is OS 3.27-only.
+  Confirm the file is in `exthome/qt-resource-rebuilder`, then rerun
+  `xovi/rebuild_hashtable` and restart XOVI.
 - **Calendar Notes is missing in AppLoad:** tap **Reload** and verify that
   `/home/root/xovi/exthome/appload/remarkable-calendar-notes/` contains
   the binary and `external.manifest.json`.

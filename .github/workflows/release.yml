@@ -49,6 +49,14 @@ jobs:
           cp assets/icon.png dist/stage/remarkable-calendar-notes/
           cp external.manifest.json dist/stage/remarkable-calendar-notes/
           chmod 755 dist/stage/remarkable-calendar-notes/remarkable-calendar-notes
+          mkdir -p dist/stage-sidebar/remarkable-calendar-notes-xovi-sidebar/appload
+          mkdir -p dist/stage-sidebar/remarkable-calendar-notes-xovi-sidebar/qt-resource-rebuilder
+          cp -a dist/stage/remarkable-calendar-notes \
+            dist/stage-sidebar/remarkable-calendar-notes-xovi-sidebar/appload/
+          cp sidebar/3.27/calendarNotesSidebar.qmd \
+            dist/stage-sidebar/remarkable-calendar-notes-xovi-sidebar/qt-resource-rebuilder/
+          cp sidebar/README.md \
+            dist/stage-sidebar/remarkable-calendar-notes-xovi-sidebar/
 
       - name: Package AppLoad bundle
         shell: bash
@@ -70,6 +78,10 @@ jobs:
           (cd dist/stage && zip -r -X "../../$out" remarkable-calendar-notes)
           sha256sum "$out" > "$out.sha256"
           sha512sum "$out" > "$out.sha512"
+          sidebar_out="dist/remarkable-calendar-notes-${version}-xovi-sidebar.zip"
+          (cd dist/stage-sidebar && zip -r -X "../../$sidebar_out" remarkable-calendar-notes-xovi-sidebar)
+          sha256sum "$sidebar_out" > "$sidebar_out.sha256"
+          sha512sum "$sidebar_out" > "$sidebar_out.sha512"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -98,35 +110,13 @@ jobs:
             dist/*.sha512
           generate_release_notes: true
           body: |
-            Automated armv7 (reMarkable 2) build for AppLoad.
+            Automated reMarkable 2 builds:
+
+            - `*-armv7.zip`: standard AppLoad application.
+            - `*-xovi-sidebar.zip`: the same app plus an optional,
+              firmware-pinned OS 3.27 xochitl sidebar launcher.
 
             **Vellum**: this release is not automatically published to
             Vellum. See `scripts/publish-vellum-testing.sh` and
             `docs/DEVELOPMENT.md` for the maintainer-reviewed process to
             propose it to vellum-dev/vellum.
-
-  mirror-public-release:
-    name: Mirror public distribution release
-    needs: publish-release
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: remarkable-calendar-notes-armv7
-          path: dist
-
-      - name: Create/update public binary release
-        env:
-          GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          repo="astafan8/remarkable-calendar-notes-releases"
-          if gh release view "$TAG" --repo "$repo" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/* --repo "$repo" --clobber
-          else
-            gh release create "$TAG" dist/* \
-              --repo "$repo" \
-              --title "$TAG" \
-              --notes "Experimental reMarkable 2 AppLoad bundle. Requires reMarkable OS 3.26-3.27, XOVI, and AppLoad 0.5.3 or newer."
-          fi
