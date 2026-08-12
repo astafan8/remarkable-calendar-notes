@@ -106,8 +106,19 @@ full-update acknowledgement, background refresh status, and panic
 details. It deliberately omits source configuration values, credentials,
 tokens, and event text.
 
-Collect the current and previous logs from Windows with:
+The collectors run on the computer connected to the tablet. Collect the
+current and previous logs from Windows with:
 
 ```powershell
 .\scripts\collect-device-log.ps1
 ```
+
+Or from Linux/macOS with:
+
+```sh
+./scripts/collect-device-log.sh
+```
+
+Both produce a single shareable archive and fall back to
+`/tmp/calendar-notes.log` if persistent storage was unavailable. See
+[`DIAGNOSTICS.md`](DIAGNOSTICS.md).

@@ -1,7 +1,7 @@
 maintainer="astafan8 <astafan8@users.noreply.github.com>"
 status="experimental"
 pkgname=remarkable-calendar-notes
-pkgver=0.1.5
+pkgver=0.1.6
 pkgrel=0
 upstream_author="astafan8"
 category="apps"
@@ -49,9 +49,9 @@ predeinstall() {
 	fi
 }
 
-# Replace these explicit placeholders from the published v0.1.5 release
+# Replace these explicit placeholders from the published v0.1.6 release
 # with scripts/update-vellum-checksums.sh before proposing the recipe.
 sha512sums="
-6e57edba27861866cc0405a73f28dd80e5c5c5c148942e65e4d7cb70d38d90ba542483fb7f26befdc25e28211af797894feef430932177a6483ac692df660810  remarkable-calendar-notes-0.1.5-armv7.zip
-9f39ea5e24a0eaf3f0e3217170cded95184fe8a6f179d4d19c4c11c110e5be135be23d7edb0b3cec093d1a4ea93ffec753f4b8fcf9b0ac1fc5856f7a95f13773  LICENSE
+PLACEHOLDER-RUN-scripts/update-vellum-checksums.sh  remarkable-calendar-notes-0.1.6-armv7.zip
+PLACEHOLDER-RUN-scripts/update-vellum-checksums.sh  LICENSE
 "

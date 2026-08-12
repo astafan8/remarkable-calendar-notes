@@ -1,7 +1,7 @@
 {
   "id": "remarkable-calendar-notes",
   "name": "Calendar Notes",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Read-only calendar (Day/Week/Work Week/Two Weeks/Month) with persistent handwritten notes per date.",
   "application": "remarkable-calendar-notes",
   "qtfb": true,
