@@ -336,11 +336,7 @@ mod device_loop {
                     &mut fb,
                     &format!("startup repaint {attempt}/{STARTUP_REPAINT_COUNT}"),
                 ) {
-                    return show_fatal_screen(
-                        &mut sink,
-                        "DISPLAY ERROR",
-                        "STARTUP REPAINT FAILED",
-                    );
+                    return show_fatal_screen(&mut sink, "DISPLAY ERROR", "STARTUP REPAINT FAILED");
                 }
                 startup_repaints_remaining -= 1;
                 next_startup_repaint += STARTUP_REPAINT_INTERVAL;
