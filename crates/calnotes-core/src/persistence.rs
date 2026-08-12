@@ -82,6 +82,78 @@ pub fn read_json_opt<T: DeserializeOwned>(path: &Path) -> io::Result<Option<T>> 
     }
 }
 
+/// Outcome of a fault-tolerant JSON read.
+pub struct Recovered<T> {
+    /// The parsed value, or `None` when the file was missing or could not
+    /// be parsed (in which case the caller should fall back to defaults).
+    pub value: Option<T>,
+    /// Set when the file existed but could not be parsed: the human-readable
+    /// parse error.
+    pub error: Option<String>,
+    /// Set when a corrupt file was moved aside: the path it was preserved at
+    /// (or a note if it could only be deleted).
+    pub recovered_from: Option<String>,
+}
+
+/// Read and deserialize JSON, but never fail because the on-disk file is
+/// corrupt or schema-incompatible.
+///
+/// A file that exists but cannot be parsed is moved aside to
+/// `<name>.corrupt-<epoch-seconds>` (so the user's data is preserved for
+/// inspection and the app cannot get stuck failing on it every launch), and
+/// `value` comes back `None` so the caller uses defaults. Only a genuine
+/// I/O error other than "not found" is returned as `Err`.
+///
+/// This is what keeps a bad locally-stored config or ink file from turning
+/// into a permanently blank screen: startup always proceeds with defaults.
+pub fn read_json_recovering<T: DeserializeOwned>(path: &Path) -> io::Result<Recovered<T>> {
+    let contents = match fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            return Ok(Recovered {
+                value: None,
+                error: None,
+                recovered_from: None,
+            });
+        }
+        Err(e) => return Err(e),
+    };
+    match serde_json::from_str(&contents) {
+        Ok(value) => Ok(Recovered {
+            value: Some(value),
+            error: None,
+            recovered_from: None,
+        }),
+        Err(parse_error) => {
+            let recovered_from = quarantine_corrupt_file(path);
+            Ok(Recovered {
+                value: None,
+                error: Some(parse_error.to_string()),
+                recovered_from: Some(recovered_from),
+            })
+        }
+    }
+}
+
+/// Move a corrupt file aside so it is preserved but no longer read on the
+/// next launch. Falls back to deleting it if it cannot be renamed, since the
+/// overriding goal is that the app must not keep failing on the same file.
+fn quarantine_corrupt_file(path: &Path) -> String {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("state");
+    let backup = path.with_file_name(format!("{file_name}.corrupt-{stamp}"));
+    match fs::rename(path, &backup) {
+        Ok(()) => backup.display().to_string(),
+        Err(_) => match fs::remove_file(path) {
+            Ok(()) => "deleted (could not be renamed)".to_string(),
+            Err(e) => format!("left in place (could not move aside: {e})"),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,6 +184,54 @@ mod tests {
         let path = dir.path().join("missing.json");
         let restored: Option<Sample> = read_json_opt(&path).unwrap();
         assert_eq!(restored, None);
+    }
+
+    #[test]
+    fn recovering_read_returns_value_for_valid_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sample.json");
+        write_json_atomic(
+            &path,
+            &Sample {
+                n: 7,
+                s: "ok".into(),
+            },
+        )
+        .unwrap();
+        let recovered: Recovered<Sample> = read_json_recovering(&path).unwrap();
+        assert_eq!(recovered.value.unwrap().n, 7);
+        assert!(recovered.error.is_none());
+        assert!(recovered.recovered_from.is_none());
+    }
+
+    #[test]
+    fn recovering_read_of_missing_file_is_not_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing.json");
+        let recovered: Recovered<Sample> = read_json_recovering(&path).unwrap();
+        assert!(recovered.value.is_none());
+        assert!(recovered.error.is_none());
+        assert!(recovered.recovered_from.is_none());
+    }
+
+    #[test]
+    fn recovering_read_quarantines_a_corrupt_file_and_falls_back_to_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sample.json");
+        fs::write(&path, "{ this is not valid json ]").unwrap();
+
+        let recovered: Recovered<Sample> = read_json_recovering(&path).unwrap();
+        // Caller must fall back to defaults.
+        assert!(recovered.value.is_none());
+        assert!(recovered.error.is_some());
+        // The corrupt file is moved aside, not left where it would fail again.
+        assert!(!path.exists());
+        let quarantined: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("sample.json.corrupt-"))
+            .collect();
+        assert_eq!(quarantined.len(), 1);
     }
 
     #[test]
