@@ -171,7 +171,7 @@ mod device_loop {
             std::env::var_os("QTFB_KEY").is_some()
         ));
         let requested_key = std::env::var("QTFB_KEY").unwrap_or_else(|_| "<missing>".to_string());
-        let mut client = match QtfbClient::connect(CANVAS_W as usize, CANVAS_H as usize) {
+        let client = match QtfbClient::connect(CANVAS_W as usize, CANVAS_H as usize) {
             Ok(mut c) => {
                 let shared_bytes = c.shared_memory().len();
                 super::diagnostics::log(format_args!(
