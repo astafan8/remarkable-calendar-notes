@@ -47,6 +47,16 @@ Since v0.1.10 the release binary is **fully statically linked** (musl), so
 it has no dependency on the device's C library or dynamic loader and keeps
 running across firmware updates — the most common cause of this failure.
 
+Since v0.1.11 the app is launched through a tiny shell wrapper (its manifest
+runs `/bin/sh`, which is always executable, and that in turn `chmod +x`'s
+and execs the app binary). This makes the app immune to the **most common**
+install mistake: copying the files to the tablet in a way that drops the
+Unix execute bit (for example extracting the zip on Windows and copying the
+folder over). AppLoad uses `execve()` to start external apps, which fails on
+a non-executable file — previously that meant a silent blank screen with no
+log. The wrapper also writes `/tmp/calendar-notes-launch.log` the moment
+AppLoad starts it, so even a pre-`main()` failure now leaves a breadcrumb.
+
 ## Collecting the log
 
 The collector runs on the **computer connected to the reMarkable**, not
