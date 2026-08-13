@@ -48,7 +48,39 @@ pub fn layout(view: ViewMode, anchor: NaiveDate, canvas_w: i32, canvas_h: i32) -
         ViewMode::WorkWeek => grid_of_days(week_start(anchor), 5, 3, canvas_w, canvas_h),
         ViewMode::TwoWeeks => grid_of_days(week_start(anchor), 14, 4, canvas_w, canvas_h),
         ViewMode::Month => month_grid(anchor, canvas_w, canvas_h),
+        ViewMode::TwoMonths => two_month_grid(anchor, canvas_w, canvas_h),
     }
+}
+
+/// Two consecutive months stacked vertically: `anchor`'s month on top and
+/// the following month below, each a full 6x7 month grid. Ink normalization
+/// is per-cell (see [`ink_rect`]), so handwriting keeps the same aspect
+/// ratio here as in every other view despite the smaller cells.
+fn two_month_grid(anchor: NaiveDate, canvas_w: i32, canvas_h: i32) -> Vec<DateCell> {
+    let top_h = canvas_h / 2;
+    let bottom_h = canvas_h - top_h;
+    let next = first_of_next_month(anchor);
+    let mut cells = month_grid(anchor, canvas_w, top_h);
+    for cell in month_grid(next, canvas_w, bottom_h) {
+        cells.push(DateCell {
+            rect: Rect {
+                y: cell.rect.y + top_h,
+                ..cell.rect
+            },
+            ..cell
+        });
+    }
+    cells
+}
+
+/// First day of the month after `date`'s month.
+fn first_of_next_month(date: NaiveDate) -> NaiveDate {
+    let (year, month) = if date.month() == 12 {
+        (date.year() + 1, 1)
+    } else {
+        (date.year(), date.month() + 1)
+    };
+    NaiveDate::from_ymd_opt(year, month, 1).unwrap()
 }
 
 fn grid_of_days(
@@ -174,6 +206,12 @@ pub fn window_for(view: ViewMode, anchor: NaiveDate) -> Window {
                 end: start + Duration::days(42),
             }
         }
+        ViewMode::TwoMonths => {
+            let start = week_start(anchor.with_day(1).unwrap());
+            let second = first_of_next_month(anchor);
+            let end = week_start(second) + Duration::days(42);
+            Window { start, end }
+        }
     }
 }
 
@@ -186,6 +224,15 @@ pub fn navigate(view: ViewMode, anchor: NaiveDate, delta: i32) -> NaiveDate {
         ViewMode::TwoWeeks => anchor + Duration::days(14 * delta as i64),
         ViewMode::Month => {
             let total = anchor.year() * 12 + (anchor.month() as i32 - 1) + delta;
+            let year = total.div_euclid(12);
+            let month = (total.rem_euclid(12) + 1) as u32;
+            let day = anchor.day().min(days_in_month(year, month));
+            NaiveDate::from_ymd_opt(year, month, day).unwrap()
+        }
+        // A two-month page advances by two whole months so pages do not
+        // overlap.
+        ViewMode::TwoMonths => {
+            let total = anchor.year() * 12 + (anchor.month() as i32 - 1) + 2 * delta;
             let year = total.div_euclid(12);
             let month = (total.rem_euclid(12) + 1) as u32;
             let day = anchor.day().min(days_in_month(year, month));
@@ -332,6 +379,29 @@ mod tests {
         let cells = layout(ViewMode::Month, d(2026, 3, 15), 700, 600);
         assert_eq!(cells[0].date, d(2026, 2, 23));
         assert!(!cells[0].in_focus_period);
+    }
+
+    #[test]
+    fn two_months_view_stacks_two_month_grids_and_advances_two_months() {
+        let cells = layout(ViewMode::TwoMonths, d(2026, 3, 15), 1400, 1800);
+        // Two full 6x7 grids.
+        assert_eq!(cells.len(), 84);
+        // Top grid is anchor's month; bottom grid is the next month, placed
+        // in the lower half.
+        assert_eq!(cells[0].rect.y, 0);
+        assert!(cells[42].rect.y >= 1800 / 2);
+        let top_focus = cells[..42].iter().filter(|c| c.in_focus_period).count();
+        let bottom_focus = cells[42..].iter().filter(|c| c.in_focus_period).count();
+        assert_eq!(top_focus, 31); // March
+        assert_eq!(bottom_focus, 30); // April
+        assert!(cells[42..].iter().any(|c| c.date == d(2026, 4, 1)));
+
+        // The window covers both months, and navigation moves by two months.
+        let window = window_for(ViewMode::TwoMonths, d(2026, 3, 15));
+        assert!(window.start <= d(2026, 3, 1));
+        assert!(window.end >= d(2026, 4, 30));
+        assert_eq!(navigate(ViewMode::TwoMonths, d(2026, 3, 15), 1).month(), 5);
+        assert_eq!(navigate(ViewMode::TwoMonths, d(2026, 3, 15), -1).month(), 1);
     }
 
     #[test]

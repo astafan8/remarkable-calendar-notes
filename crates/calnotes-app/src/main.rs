@@ -54,7 +54,7 @@ fn print_usage() {
          remarkable-calendar-notes preview [OPTIONS]   Render the current screen to a .ppm file\n\n\
          preview options:\n  \
          --out <path>       Output file (default: preview.ppm)\n  \
-         --view <mode>      day | week | workweek | twoweeks | month\n  \
+         --view <mode>      day | week | workweek | twoweeks | month | twomonths\n  \
          --refresh          Fetch fresh events from enabled sources before rendering"
     );
 }
@@ -112,6 +112,7 @@ fn parse_view_mode(s: &str) -> Option<calnotes_core::model::ViewMode> {
         "workweek" | "work-week" | "work_week" => Some(ViewMode::WorkWeek),
         "twoweeks" | "two-weeks" | "two_weeks" => Some(ViewMode::TwoWeeks),
         "month" => Some(ViewMode::Month),
+        "twomonths" | "two-months" | "two_months" => Some(ViewMode::TwoMonths),
         _ => None,
     }
 }
@@ -151,6 +152,22 @@ mod device_loop {
     /// cannot leave the window white until the next user action.
     const STARTUP_REPAINT_INTERVAL: Duration = Duration::from_millis(300);
     const STARTUP_REPAINT_COUNT: u8 = 5;
+
+    /// A finger contact only counts as a deliberate tap if it lasts less
+    /// than this and moves less than [`TAP_MOVE_THRESHOLD`] pixels.
+    const TAP_MAX_DURATION: Duration = Duration::from_millis(400);
+    const TAP_MOVE_THRESHOLD: i32 = 40;
+
+    /// In-progress finger contact, used for palm rejection (see the event
+    /// loop). A tap is a single, brief, still contact with no pen activity.
+    struct TouchTrack {
+        start_x: i32,
+        start_y: i32,
+        start: Instant,
+        moved: bool,
+        invalid: bool,
+        active_points: u32,
+    }
 
     /// The device's real display sink: QTFB shared memory plus its update
     /// requests. Deliberately trivial — everything that decides *what* to
@@ -277,6 +294,12 @@ mod device_loop {
         let mut next_startup_repaint = Instant::now() + STARTUP_REPAINT_INTERVAL;
 
         let mut pen_down = false;
+        // Palm rejection: a finger contact only counts as a deliberate tap
+        // (open a day / press a button) if it is a single, brief, still
+        // contact during which the pen was not used. A resting palm while
+        // writing moves, lasts, multi-touches, or coincides with pen input,
+        // so it is ignored instead of opening the day under the palm.
+        let mut touch: Option<TouchTrack> = None;
 
         loop {
             match sink.0.poll_events() {
@@ -284,15 +307,73 @@ mod device_loop {
                     let mut needs_full_redraw = false;
                     for ev in events {
                         match ev.kind {
-                            input_kind::TOUCH_PRESS => {
-                                app.handle_touch_tap(ev.x, ev.y);
-                                needs_full_redraw = true;
+                            input_kind::TOUCH_PRESS => match touch.as_mut() {
+                                None => {
+                                    touch = Some(TouchTrack {
+                                        start_x: ev.x,
+                                        start_y: ev.y,
+                                        start: Instant::now(),
+                                        moved: false,
+                                        invalid: pen_down,
+                                        active_points: 1,
+                                    });
+                                }
+                                // A second simultaneous contact means a palm,
+                                // not a finger tap.
+                                Some(track) => {
+                                    track.active_points += 1;
+                                    track.invalid = true;
+                                }
+                            },
+                            input_kind::TOUCH_UPDATE => {
+                                if let Some(track) = touch.as_mut() {
+                                    if (ev.x - track.start_x).abs() > TAP_MOVE_THRESHOLD
+                                        || (ev.y - track.start_y).abs() > TAP_MOVE_THRESHOLD
+                                    {
+                                        track.moved = true;
+                                    }
+                                }
+                            }
+                            input_kind::TOUCH_RELEASE => {
+                                if let Some(track) = touch.as_mut() {
+                                    track.active_points = track.active_points.saturating_sub(1);
+                                    if track.active_points == 0 {
+                                        let track = touch.take().unwrap();
+                                        let is_tap = !track.invalid
+                                            && !track.moved
+                                            && !pen_down
+                                            && track.start.elapsed() <= TAP_MAX_DURATION;
+                                        if is_tap {
+                                            app.handle_touch_tap(track.start_x, track.start_y);
+                                            needs_full_redraw = true;
+                                        }
+                                    }
+                                }
                             }
                             input_kind::PEN_PRESS => {
-                                pen_down = true;
-                                app.pen_down(ev.x, ev.y, ev.pen_pressure());
+                                // Any pen use during a finger contact marks
+                                // that contact as a palm.
+                                if let Some(track) = touch.as_mut() {
+                                    track.invalid = true;
+                                }
+                                match app.handle_pen_tap(ev.x, ev.y) {
+                                    // The pen operated a toolbar/settings
+                                    // control, exactly like a finger tap.
+                                    Some(redraw) => {
+                                        needs_full_redraw |= redraw;
+                                        pen_down = false;
+                                    }
+                                    // Below the toolbar: begin writing.
+                                    None => {
+                                        pen_down = true;
+                                        app.pen_down(ev.x, ev.y, ev.pen_pressure());
+                                    }
+                                }
                             }
                             input_kind::PEN_UPDATE if pen_down => {
+                                if let Some(track) = touch.as_mut() {
+                                    track.invalid = true;
+                                }
                                 if let Some(segment) = app.pen_move(ev.x, ev.y, ev.pen_pressure()) {
                                     if let Err(e) = display::draw_segment(sink, fb, segment) {
                                         super::diagnostics::log(format_args!(
@@ -307,6 +388,9 @@ mod device_loop {
                                 }
                             }
                             input_kind::PEN_RELEASE => {
+                                if let Some(track) = touch.as_mut() {
+                                    track.invalid = true;
+                                }
                                 pen_down = false;
                                 needs_full_redraw |= app.pen_up();
                             }
