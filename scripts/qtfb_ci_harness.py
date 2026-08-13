@@ -75,9 +75,19 @@ def validate_manifest(path: Path, binary: Path) -> dict[str, object]:
     if manifest.get("qtfb") is not True:
         raise ValueError("external.manifest.json must enable qtfb")
     application = manifest.get("application")
-    if not isinstance(application, str) or Path(application).name != binary.name:
+    args = manifest.get("args") or []
+    # The app may be launched directly (application == the binary) or through
+    # a shell wrapper (application == a shell, with the binary named in args
+    # so the wrapper can fix its execute bit and exec it). Accept either, but
+    # require that the manifest actually references this binary somewhere.
+    application_names_binary = (
+        isinstance(application, str) and Path(application).name == binary.name
+    )
+    args_reference_binary = any(binary.name in str(arg) for arg in args)
+    if not (application_names_binary or args_reference_binary):
         raise ValueError(
-            f"manifest application {application!r} does not name {binary.name!r}"
+            f"manifest neither runs nor references {binary.name!r} "
+            f"(application={application!r}, args={args!r})"
         )
     if manifest.get("aspectRatio") != "original":
         raise ValueError("manifest must select the original RM1/RM2 aspect ratio")

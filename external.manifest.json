@@ -1,9 +1,13 @@
 {
   "id": "remarkable-calendar-notes",
   "name": "Calendar Notes",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Read-only calendar (Day/Week/Work Week/Two Weeks/Month) with persistent handwritten notes per date.",
-  "application": "remarkable-calendar-notes",
+  "application": "/bin/sh",
+  "args": [
+    "-c",
+    "log=/tmp/calendar-notes-launch.log; echo \"[launch] $(date) cwd=$(pwd)\" >>\"$log\" 2>/dev/null; chmod +x ./remarkable-calendar-notes 2>>\"$log\"; exec ./remarkable-calendar-notes run 2>>\"$log\""
+  ],
   "qtfb": true,
   "supportsVirtualKeyboard": true,
   "aspectRatio": "original"

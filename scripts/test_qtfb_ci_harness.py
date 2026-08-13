@@ -76,6 +76,46 @@ class QtfbHarnessTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 HARNESS.validate_manifest(manifest, binary)
 
+    def test_manifest_may_launch_the_binary_through_a_shell_wrapper(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / "remarkable-calendar-notes"
+            binary.touch()
+            manifest = root / "external.manifest.json"
+            # The wrapper form: application is a shell, the binary is named in
+            # args so the wrapper can chmod +x and exec it.
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "application": "/bin/sh",
+                        "args": [
+                            "-c",
+                            "chmod +x ./remarkable-calendar-notes; "
+                            "exec ./remarkable-calendar-notes run",
+                        ],
+                        "qtfb": True,
+                        "aspectRatio": "original",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.assertTrue(HARNESS.validate_manifest(manifest, binary)["qtfb"])
+
+            # A wrapper that never names the binary is rejected.
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "application": "/bin/sh",
+                        "args": ["-c", "true"],
+                        "qtfb": True,
+                        "aspectRatio": "original",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaises(ValueError):
+                HARNESS.validate_manifest(manifest, binary)
+
     def test_launch_command_supports_an_arm_emulator_and_sysroot(self):
         binary = Path("/tmp/remarkable-calendar-notes")
         emulator = Path("/usr/bin/qemu-arm")

@@ -70,6 +70,17 @@ if [ -f "$BIN" ]; then
              /usr/lib/libc.so.6 /usr/lib/libgcc_s.so.1; do
         if [ -e "$L" ]; then echo "  present: $L"; else echo "  MISSING: $L"; fi
     done
+    # The execute bit is the single most common cause of a silent no-launch:
+    # AppLoad uses execve(), which fails on a non-executable file, so the app
+    # never starts and never writes a log. Report it explicitly BEFORE the
+    # direct-execution test below (which sets it) so the original state shows.
+    if [ -x "$BIN" ]; then
+        echo "execute bit: OK (binary is executable)"
+    else
+        echo "execute bit: MISSING -> AppLoad cannot launch it (mode 0644?)."
+        echo "  Fix immediately with: chmod +x \"$BIN\""
+        echo "  (v0.1.11+ launches via a wrapper that repairs this automatically.)"
+    fi
 else
     echo "  BINARY NOT FOUND at ${BIN:-<unknown>}"
 fi
@@ -93,6 +104,11 @@ echo
 echo "----- Existing logs / markers -----"
 LOGDIR=/home/root/.local/share/remarkable-calendar-notes
 ls -la "$LOGDIR" 2>/dev/null || echo "  $LOGDIR does not exist"
+echo "--- launch wrapper log (/tmp/calendar-notes-launch.log) ---"
+# Written by the AppLoad launch wrapper before it execs the binary. If this
+# exists but the app log does not, AppLoad launched the wrapper but the
+# binary still failed to start — and the reason is captured here.
+tail -n 40 /tmp/calendar-notes-launch.log 2>/dev/null || echo "  none"
 echo "--- calendar-notes.log (last 40 lines) ---"
 tail -n 40 "$LOGDIR/calendar-notes.log" 2>/dev/null || echo "  no calendar-notes.log"
 echo "--- /tmp/calendar-notes.log fallback (last 40 lines) ---"
