@@ -28,6 +28,10 @@ pub struct FrameBuffer {
 pub const WHITE: u8 = 255;
 pub const BLACK: u8 = 0;
 pub const GRAY: u8 = 160;
+/// A near-white grey used only for transient eraser feedback: the faint
+/// trail shown under the pen while the eraser tool is active, so the user
+/// can see what they are about to remove (as on the native notebook).
+pub const LIGHT_GRAY: u8 = 210;
 
 fn gray_to_rgb565(gray: u8) -> u16 {
     let r = (gray as u16 >> 3) & 0x1F;
@@ -123,6 +127,24 @@ impl FrameBuffer {
     /// enough to call per incoming pen sample for direct incremental
     /// drawing (see docs/LIMITATIONS.md on QTFB pen latency).
     pub fn draw_line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, gray: u8, thickness: i32) {
+        self.draw_line_styled(x0, y0, x1, y1, gray, thickness, None);
+    }
+
+    /// Like [`FrameBuffer::draw_line`], but optionally dashed: `dash =
+    /// Some((on, off))` plots `on` pixels then skips `off` along the line,
+    /// used to draw the lasso outline distinctly from real ink. `dash =
+    /// None` is a solid line, pixel-for-pixel identical to `draw_line`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_line_styled(
+        &mut self,
+        x0: i32,
+        y0: i32,
+        x1: i32,
+        y1: i32,
+        gray: u8,
+        thickness: i32,
+        dash: Option<(i32, i32)>,
+    ) {
         let dx = (x1 - x0).abs();
         let dy = -(y1 - y0).abs();
         let sx = if x0 < x1 { 1 } else { -1 };
@@ -130,10 +152,18 @@ impl FrameBuffer {
         let mut err = dx + dy;
         let (mut x, mut y) = (x0, y0);
         let half = (thickness / 2).max(0);
+        let period = dash.map(|(on, off)| (on.max(1), (on + off).max(1)));
+        let mut step: i32 = 0;
         loop {
-            for oy in -half..=half {
-                for ox in -half..=half {
-                    self.set_pixel(x + ox, y + oy, gray);
+            let plot = match period {
+                Some((on, cycle)) => step % cycle < on,
+                None => true,
+            };
+            if plot {
+                for oy in -half..=half {
+                    for ox in -half..=half {
+                        self.set_pixel(x + ox, y + oy, gray);
+                    }
                 }
             }
             if x == x1 && y == y1 {
@@ -148,6 +178,7 @@ impl FrameBuffer {
                 err += dx;
                 y += sy;
             }
+            step += 1;
         }
     }
 
@@ -336,6 +367,19 @@ fn font_glyph(c: char) -> Option<Glyph> {
         '?' => [0b111, 0b001, 0b010, 0b000, 0b010],
         '!' => [0b010, 0b010, 0b010, 0b000, 0b010],
         '\'' => [0b010, 0b010, 0b000, 0b000, 0b000],
+        // Symbols needed to enter emails, Apple IDs, and passwords.
+        '@' => [0b111, 0b101, 0b111, 0b100, 0b011],
+        '_' => [0b000, 0b000, 0b000, 0b000, 0b111],
+        '+' => [0b000, 0b010, 0b111, 0b010, 0b000],
+        '=' => [0b000, 0b111, 0b000, 0b111, 0b000],
+        '#' => [0b101, 0b111, 0b101, 0b111, 0b101],
+        '%' => [0b101, 0b001, 0b010, 0b100, 0b101],
+        '&' => [0b010, 0b101, 0b010, 0b101, 0b011],
+        '*' => [0b101, 0b010, 0b101, 0b000, 0b000],
+        '(' => [0b001, 0b010, 0b010, 0b010, 0b001],
+        ')' => [0b100, 0b010, 0b010, 0b010, 0b100],
+        ';' => [0b000, 0b010, 0b000, 0b010, 0b100],
+        '$' => [0b011, 0b110, 0b011, 0b110, 0b010],
         _ => return None,
     })
 }
@@ -365,6 +409,35 @@ mod tests {
         for chunk in bytes.chunks_exact(2) {
             assert_eq!(chunk, expected);
         }
+    }
+
+    #[test]
+    fn email_and_password_symbols_have_visible_glyphs() {
+        // Entering an Apple ID / email / password needs these to render.
+        for c in [
+            '@', '.', '_', '+', '=', '#', '%', '&', '*', '(', ')', ';', '$', ':', '-', '/',
+        ] {
+            assert!(font_glyph(c).is_some(), "missing glyph for {c:?}");
+        }
+        let mut fb = FrameBuffer::new(300, 16);
+        fb.draw_text(0, 0, "A.B@C_D", BLACK, 2);
+        assert!(fb.has_non_white_pixels());
+    }
+
+    #[test]
+    fn dashed_line_draws_fewer_pixels_than_a_solid_one() {
+        let solid_count = {
+            let mut fb = FrameBuffer::new(100, 4);
+            fb.draw_line_styled(0, 1, 99, 1, BLACK, 1, None);
+            fb.non_white_pixel_count()
+        };
+        let dashed_count = {
+            let mut fb = FrameBuffer::new(100, 4);
+            fb.draw_line_styled(0, 1, 99, 1, BLACK, 1, Some((8, 8)));
+            fb.non_white_pixel_count()
+        };
+        assert!(dashed_count > 0);
+        assert!(dashed_count < solid_count);
     }
 
     #[test]

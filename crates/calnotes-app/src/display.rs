@@ -176,13 +176,15 @@ pub fn draw_segment<S: FrameSink>(
     fb: &mut FrameBuffer,
     segment: PenSegment,
 ) -> io::Result<Option<Rect>> {
-    fb.draw_line(
+    let dash = if segment.dashed { Some((8, 8)) } else { None };
+    fb.draw_line_styled(
         segment.x0,
         segment.y0,
         segment.x1,
         segment.y1,
-        BLACK,
+        segment.gray,
         segment.thickness,
+        dash,
     );
     let Some(dirty) = fb.clamp_rect(segment.dirty_rect()) else {
         return Ok(None);
@@ -337,6 +339,8 @@ mod tests {
                     x1: -40,
                     y1: -40,
                     thickness: 2,
+                    gray: BLACK,
+                    dashed: false,
                 },
             )
             .unwrap();

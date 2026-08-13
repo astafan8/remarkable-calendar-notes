@@ -18,7 +18,7 @@
 use calnotes_core::config::AppState;
 use calnotes_core::model::{CalendarSource, Event, SourceKind, SourceStatus, ViewMode};
 use calnotes_core::recurrence::Window;
-use calnotes_core::render::{FrameBuffer, BLACK, GRAY, WHITE};
+use calnotes_core::render::{FrameBuffer, BLACK, GRAY, LIGHT_GRAY, WHITE};
 use calnotes_core::sources::google;
 use calnotes_core::timeutil::UtcOffset;
 use calnotes_core::vkb::{TextField, VkbKey};
@@ -35,10 +35,18 @@ pub const CANVAS_H: i32 = calnotes_core::render::SCREEN_HEIGHT as i32;
 /// in canvas pixels.
 const TOOLBAR_ROW_H: i32 = 96;
 const TOOLBAR_H: i32 = TOOLBAR_ROW_H * 3;
-const MONTH_LABEL_W: i32 = 52;
+const MONTH_LABEL_W: i32 = 72;
 const UI_TEXT_SCALE: i32 = 4;
 const BODY_TEXT_SCALE: i32 = 3;
 const EVENT_TEXT_SCALE: i32 = 2;
+/// Day-number size inside a calendar cell — a little smaller than the
+/// toolbar button text (`UI_TEXT_SCALE`) so the dates read clearly.
+const DAY_NUMBER_SCALE: i32 = 3;
+/// Vertical month-name label size (down the left gutter in Month view) —
+/// deliberately large for at-a-glance readability.
+const MONTH_LABEL_SCALE: i32 = 6;
+/// Width of the transient eraser feedback trail, in canvas pixels.
+const ERASER_FEEDBACK_THICKNESS: i32 = 8;
 
 /// Pen stroke width, in canvas pixels. Shared by the full re-render and the
 /// incremental per-segment drawing so both produce identical ink.
@@ -113,6 +121,7 @@ enum ActiveGesture {
     Erase {
         date: NaiveDate,
         points: Vec<NormPoint>,
+        last_drawn: (i32, i32),
     },
     Lasso {
         date: NaiveDate,
@@ -131,6 +140,12 @@ pub struct PenSegment {
     pub x1: i32,
     pub y1: i32,
     pub thickness: i32,
+    /// Grey level to draw this segment with (`BLACK` for real pen ink,
+    /// lighter greys for transient lasso/eraser feedback).
+    pub gray: u8,
+    /// Whether to draw the segment as a dashed line (used for the lasso
+    /// selection outline, so it never looks like real ink).
+    pub dashed: bool,
 }
 
 impl PenSegment {
@@ -203,6 +218,11 @@ pub struct App {
     pub status: String,
     refresh_rx: Option<Receiver<RefreshOutcome>>,
     pub google_login: Option<GoogleLogin>,
+    /// Dates edited (drawn/erased/lasso'd/cleared) in order, so Undo can
+    /// reverse the user's actual last action regardless of which cell it
+    /// was in — the anchor date is not necessarily where they were writing.
+    /// Not persisted: undo history is per session.
+    edit_history: Vec<NaiveDate>,
 }
 
 impl App {
@@ -235,6 +255,7 @@ impl App {
             status: String::new(),
             refresh_rx: None,
             google_login: None,
+            edit_history: Vec::new(),
         })
     }
 
@@ -606,14 +627,33 @@ impl App {
         }
     }
 
+    /// Undo the most recent ink edit anywhere on screen — the last stroke
+    /// drawn, or the last erase/lasso/clear that removed strokes — not just
+    /// edits on the anchor date. Erasing and lassoing are fully undoable.
     pub fn undo_current_day(&mut self) {
+        while let Some(date) = self.edit_history.pop() {
+            if self.state.ink.undo(date) {
+                let _ = self.state.save_ink();
+                return;
+            }
+        }
+        // Fall back to the anchor date if nothing is in the session history
+        // (e.g. ink drawn in a previous session).
         if self.state.ink.undo(self.state.config.anchor_date) {
             let _ = self.state.save_ink();
         }
     }
 
+    /// Clear a whole day's ink. Targets the date the user was last writing
+    /// on (so it works in multi-day views), falling back to the anchor.
     pub fn clear_current_day(&mut self) {
-        self.state.ink.clear_day(self.state.config.anchor_date);
+        let date = self
+            .edit_history
+            .last()
+            .copied()
+            .unwrap_or(self.state.config.anchor_date);
+        self.state.ink.clear_day(date);
+        self.edit_history.push(date);
         let _ = self.state.save_ink();
     }
 
@@ -713,6 +753,30 @@ impl App {
         }
     }
 
+    /// A stylus press on a toolbar button (or anywhere on the settings
+    /// screen) behaves like a finger tap, so the pen can operate the UI as
+    /// it does everywhere else on the reMarkable. Returns `Some(needs_full_
+    /// redraw)` when the press was a UI interaction, or `None` when it falls
+    /// on the writing surface and should instead begin an ink stroke.
+    pub fn handle_pen_tap(&mut self, x: i32, y: i32) -> Option<bool> {
+        if self.screen == Screen::Settings {
+            self.handle_settings_tap(x, y);
+            return Some(true);
+        }
+        for (mode, rect) in self.view_buttons() {
+            if within(rect, x, y) {
+                self.set_view_mode(mode);
+                return Some(true);
+            }
+        }
+        for (action, rect) in self.action_buttons() {
+            if within(rect, x, y) {
+                self.perform_action(action);
+                return Some(true);
+            }
+        }
+        None
+    }
     fn perform_action(&mut self, action: Action) {
         match action {
             Action::Settings => {
@@ -765,6 +829,7 @@ impl App {
             InkTool::Erase => ActiveGesture::Erase {
                 date,
                 points: vec![point],
+                last_drawn,
             },
             InkTool::Lasso => ActiveGesture::Lasso {
                 date,
@@ -786,8 +851,10 @@ impl App {
             }
             | ActiveGesture::Lasso {
                 date, last_drawn, ..
+            }
+            | ActiveGesture::Erase {
+                date, last_drawn, ..
             } => (*date, last_drawn.0, last_drawn.1),
-            ActiveGesture::Erase { date, .. } => (*date, 0, 0),
         };
         let cells = self.grid_cells();
         // A stroke stays bound to the cell it started in even if the pen
@@ -810,6 +877,16 @@ impl App {
             pressure,
         };
         let (px1, py1) = view::denormalize_within(rect, nx, ny);
+        // Each tool produces the same incremental line, but styled so the
+        // user can tell them apart: solid black ink for the pen, a faint
+        // solid trail for the eraser, and a dashed grey outline for the
+        // lasso. Only the pen's marks are persisted; the eraser/lasso
+        // feedback is wiped by the full redraw on pen-up.
+        let (gray, thickness, dashed) = match self.active_gesture.as_ref()? {
+            ActiveGesture::Draw { .. } => (BLACK, INK_THICKNESS, false),
+            ActiveGesture::Erase { .. } => (LIGHT_GRAY, ERASER_FEEDBACK_THICKNESS, false),
+            ActiveGesture::Lasso { .. } => (GRAY, INK_THICKNESS, true),
+        };
         match self.active_gesture.as_mut()? {
             ActiveGesture::Draw {
                 stroke_index,
@@ -819,9 +896,11 @@ impl App {
                 self.state.ink.push_point(date, *stroke_index, point);
                 *last_drawn = (px1, py1);
             }
-            ActiveGesture::Erase { points, .. } => {
+            ActiveGesture::Erase {
+                points, last_drawn, ..
+            } => {
                 points.push(point);
-                return None;
+                *last_drawn = (px1, py1);
             }
             ActiveGesture::Lasso {
                 points, last_drawn, ..
@@ -835,7 +914,9 @@ impl App {
             y0: py0,
             x1: px1,
             y1: py1,
-            thickness: INK_THICKNESS,
+            thickness,
+            gray,
+            dashed,
         })
     }
 
@@ -849,15 +930,30 @@ impl App {
             ActiveGesture::Draw {
                 date, stroke_index, ..
             } => {
+                // A real mark (>= 2 points) is an undoable edit; a mere tap
+                // is discarded and recorded nothing.
+                let kept = self
+                    .state
+                    .ink
+                    .strokes_for(date)
+                    .get(stroke_index)
+                    .is_some_and(|s| !s.is_empty());
                 self.state.ink.discard_if_empty(date, stroke_index);
+                if kept {
+                    self.edit_history.push(date);
+                }
                 false
             }
-            ActiveGesture::Erase { date, points } => {
-                self.state.ink.erase_path(date, &points, 0.035);
+            ActiveGesture::Erase { date, points, .. } => {
+                if self.state.ink.erase_path(date, &points, 0.035) > 0 {
+                    self.edit_history.push(date);
+                }
                 true
             }
             ActiveGesture::Lasso { date, points, .. } => {
-                self.state.ink.delete_inside_lasso(date, &points);
+                if self.state.ink.delete_inside_lasso(date, &points) > 0 {
+                    self.edit_history.push(date);
+                }
                 true
             }
         };
@@ -928,7 +1024,7 @@ impl App {
                 8,
                 TOOLBAR_H + (CANVAS_H - TOOLBAR_H) / 2,
                 &self.state.config.anchor_date.format("%B").to_string(),
-                BODY_TEXT_SCALE,
+                MONTH_LABEL_SCALE,
             );
         }
         for (index, cell) in cells.iter().enumerate() {
@@ -947,10 +1043,16 @@ impl App {
             }
             let day_label = format!("{}", cell.date.day());
             let label_gray = if cell.in_focus_period { BLACK } else { GRAY };
-            fb.draw_text(cell.rect.x + 4, cell.rect.y + 4, &day_label, label_gray, 2);
+            fb.draw_text(
+                cell.rect.x + 4,
+                cell.rect.y + 4,
+                &day_label,
+                label_gray,
+                DAY_NUMBER_SCALE,
+            );
 
             // Event summaries, one line each, below the day number.
-            let mut text_y = cell.rect.y + 24;
+            let mut text_y = cell.rect.y + 8 + 5 * DAY_NUMBER_SCALE;
             for event in self.events_for(cell.date) {
                 if text_y + 12 > cell.rect.y + cell.rect.h {
                     break;
@@ -2324,13 +2426,18 @@ mod tests {
 
             app.ink_tool = InkTool::Erase;
             app.pen_down(390, 680, 1.0);
-            assert!(app.pen_move(410, 720, 1.0).is_none());
+            // The eraser now shows a faint (light-grey), non-ink feedback
+            // trail under the pen, rather than drawing nothing.
+            let feedback = app.pen_move(410, 720, 1.0).unwrap();
+            assert_eq!(feedback.gray, calnotes_core::render::LIGHT_GRAY);
+            assert!(!feedback.dashed);
             assert!(app.pen_up());
             assert!(app
                 .state
                 .ink
                 .strokes_for(app.state.config.anchor_date)
                 .is_empty());
+            // Undo brings the erased stroke back.
             app.undo_current_day();
             assert_eq!(
                 app.state
@@ -2362,7 +2469,90 @@ mod tests {
             let remaining = app.state.ink.strokes_for(app.state.config.anchor_date);
             assert_eq!(remaining.len(), 1);
             assert!(remaining[0].points[0].x > 0.5);
+
+            // The lasso outline is drawn dashed and grey, and lassoing is
+            // undoable just like erasing.
+            app.ink_tool = InkTool::Lasso;
+            app.pen_down(700, 1000, 1.0);
+            let feedback = app.pen_move(760, 1100, 1.0).unwrap();
+            assert!(feedback.dashed);
+            assert_eq!(feedback.gray, calnotes_core::render::GRAY);
+            app.pen_up();
         });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn the_pen_operates_toolbar_buttons_and_writes_below_them() {
+        with_temp_data_dir(|| {
+            let mut app = App::new().unwrap();
+            app.set_view_mode(ViewMode::Month);
+            // A pen press on the DAY view button switches views, exactly as a
+            // finger tap would.
+            let (mode, rect) = app
+                .view_buttons()
+                .into_iter()
+                .find(|(m, _)| *m == ViewMode::Day)
+                .unwrap();
+            assert_eq!(mode, ViewMode::Day);
+            assert_eq!(
+                app.handle_pen_tap(rect.x + rect.w / 2, rect.y + rect.h / 2),
+                Some(true)
+            );
+            assert_eq!(app.state.config.view_mode, ViewMode::Day);
+
+            // A pen press on the writing surface below the toolbar is not a
+            // UI tap — it should begin an ink stroke.
+            assert_eq!(app.handle_pen_tap(400, 900), None);
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn undo_reverses_the_last_edit_even_on_a_non_anchor_cell() {
+        with_temp_data_dir(|| {
+            let mut app = App::new().unwrap();
+            app.set_view_mode(ViewMode::Month);
+            let cells = app.grid_cells();
+            // Two different in-focus cells, neither necessarily the anchor.
+            let a = cells.iter().find(|c| c.in_focus_period).unwrap().rect;
+            let b = cells
+                .iter()
+                .filter(|c| c.in_focus_period)
+                .nth(10)
+                .unwrap()
+                .rect;
+            let stroke_in = |app: &mut App, r: view::Rect| {
+                app.pen_down(r.x + r.w / 3, r.y + r.h / 2, 1.0);
+                app.pen_move(r.x + 2 * r.w / 3, r.y + r.h / 2, 1.0).unwrap();
+                app.pen_up();
+            };
+            stroke_in(&mut app, a);
+            stroke_in(&mut app, b);
+            let total = |app: &App| {
+                app.state
+                    .ink
+                    .days
+                    .values()
+                    .map(|d| d.strokes.len())
+                    .sum::<usize>()
+            };
+            assert_eq!(total(&app), 2);
+            // Undo removes the last stroke (on cell B), then the first (A) —
+            // regardless of the anchor date.
+            app.undo_current_day();
+            assert_eq!(total(&app), 1);
+            app.undo_current_day();
+            assert_eq!(total(&app), 0);
+        });
+    }
+
+    #[test]
+    fn month_is_the_default_view() {
+        assert_eq!(
+            calnotes_core::model::AppConfig::default().view_mode,
+            ViewMode::Month
+        );
     }
 
     #[test]

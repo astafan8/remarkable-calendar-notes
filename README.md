@@ -4,16 +4,20 @@ A read-only calendar app for the **reMarkable 2**, with persistent
 handwritten notes attached to individual dates. Runs as an [AppLoad](https://github.com/asivery/rm-appload)
 external QTFB app — no jailbreak/takeover mode required.
 
-- **Views:** Day, Week, Work Week, Two Weeks, Month, with compact,
-  handwriting-friendly grids and `PREV`/`TODAY`/
+- **Views:** Day, Week, Work Week, Two Weeks, Month (the default), and Two
+  Months, with compact, handwriting-friendly grids and `PREV`/`TODAY`/
   `NEXT` navigation; `TODAY` always jumps to the real current date at your
-  configured UTC offset.
+  configured UTC offset. Both a finger and the pen operate the toolbar
+  buttons; a finger tap on a cell opens that day, while resting your palm
+  to write is ignored (palm rejection).
 - **Notes:** write on any date in any view with the pen; notes are stored
   normalized to that date's grid cell, so the same handwriting renders
   at a fixed aspect ratio in every view and survives navigation/restart.
-  Use **PEN**, stroke **ERASE**, or **LASSO** deletion. Each pen sample
-  draws only its newest stroke segment and refreshes only the few pixels
-  it touched. Undo and clear-day controls included.
+  Use **PEN**, stroke **ERASE** (with a faint eraser trail), or **LASSO**
+  (a dashed grey outline) deletion. Each pen sample draws only its newest
+  stroke segment and refreshes only the few pixels it touched. **UNDO**
+  reverses your last edit — including an erase or lasso — and clear-day is
+  included.
 - **Calendar sources**, all configured in-app (no config files to hand
   edit): a local `.ics` file, an arbitrary HTTPS `.ics` URL, Google
   Calendar (OAuth device flow, with an in-app `LOG IN` action), and iCloud

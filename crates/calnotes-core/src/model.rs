@@ -133,7 +133,7 @@ pub enum SourceStatus {
     },
 }
 
-/// Which of the five read-only display modes is active.
+/// Which of the display modes is active.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ViewMode {
     Day,
@@ -141,15 +141,17 @@ pub enum ViewMode {
     WorkWeek,
     TwoWeeks,
     Month,
+    TwoMonths,
 }
 
 impl ViewMode {
-    pub const ALL: [ViewMode; 5] = [
+    pub const ALL: [ViewMode; 6] = [
         ViewMode::Day,
         ViewMode::Week,
         ViewMode::WorkWeek,
         ViewMode::TwoWeeks,
         ViewMode::Month,
+        ViewMode::TwoMonths,
     ];
 
     pub fn label(&self) -> &'static str {
@@ -159,6 +161,7 @@ impl ViewMode {
             ViewMode::WorkWeek => "Work Week",
             ViewMode::TwoWeeks => "Two Weeks",
             ViewMode::Month => "Month",
+            ViewMode::TwoMonths => "Two Months",
         }
     }
 }
@@ -183,7 +186,7 @@ pub struct AppConfig {
 }
 
 fn default_view_mode() -> ViewMode {
-    ViewMode::Week
+    ViewMode::Month
 }
 
 /// Sentinel for "no anchor chosen yet". Any date before 2000 is treated as
@@ -202,7 +205,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         AppConfig {
             utc_offset_minutes: 0,
-            view_mode: ViewMode::Week,
+            view_mode: ViewMode::Month,
             sources: Vec::new(),
             anchor_date: unset_anchor(),
         }

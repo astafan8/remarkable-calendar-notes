@@ -1,8 +1,8 @@
 {
   "id": "remarkable-calendar-notes",
   "name": "Calendar Notes",
-  "version": "0.1.11",
-  "description": "Read-only calendar (Day/Week/Work Week/Two Weeks/Month) with persistent handwritten notes per date.",
+  "version": "0.1.12",
+  "description": "Read-only calendar (Day/Week/Work Week/Two Weeks/Month/Two Months) with persistent handwritten notes per date.",
   "application": "/bin/sh",
   "args": [
     "-c",
