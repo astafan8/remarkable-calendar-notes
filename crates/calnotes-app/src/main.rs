@@ -20,6 +20,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("preview") => run_preview(&args[1..]),
+        Some("fetch-debug") => run_fetch_debug(&args[1..]),
         Some("run") | None => {
             #[cfg(unix)]
             diagnostics::write_start_marker();
@@ -55,8 +56,57 @@ fn print_usage() {
          preview options:\n  \
          --out <path>       Output file (default: preview.ppm)\n  \
          --view <mode>      day | week | workweek | twoweeks | month | twomonths\n  \
-         --refresh          Fetch fresh events from enabled sources before rendering"
+         --refresh          Fetch fresh events from enabled sources before rendering\n\n\
+         remarkable-calendar-notes fetch-debug [URL]   Diagnose an HTTPS .ics fetch on this device\n  \
+         (no URL)           Test every configured HTTPS .ics source using its stored URL"
     );
+}
+
+/// Diagnose an HTTPS `.ics` fetch directly on the device, using the exact
+/// same HTTP/TLS code path the app uses. With a URL argument it tests that
+/// URL; with none it tests every configured HTTPS source's stored URL, so a
+/// corrupted/mistyped stored address is caught too.
+fn run_fetch_debug(args: &[String]) -> ExitCode {
+    if let Some(url) = args.iter().find(|a| !a.starts_with("--")) {
+        let normalized = app::normalize_https_url(url);
+        if &normalized != url {
+            println!("normalized URL: {normalized}");
+        }
+        println!(
+            "{}",
+            calnotes_core::sources::https_ics::fetch_ics_report(&normalized)
+        );
+        return ExitCode::SUCCESS;
+    }
+
+    let app = match App::new() {
+        Ok(app) => app,
+        Err(e) => {
+            eprintln!("could not load configuration: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut found = false;
+    for source in &app.state.config.sources {
+        if let calnotes_core::model::SourceKind::HttpsIcs { url } = &source.kind {
+            found = true;
+            println!("### source: {} (enabled={})", source.label, source.enabled);
+            println!("stored URL: {url:?}");
+            let normalized = app::normalize_https_url(url);
+            if &normalized != url {
+                println!("normalized URL: {normalized:?}");
+            }
+            println!(
+                "{}",
+                calnotes_core::sources::https_ics::fetch_ics_report(&normalized)
+            );
+        }
+    }
+    if !found {
+        println!("No HTTPS .ics sources are configured. Pass a URL to test one:");
+        println!("  remarkable-calendar-notes fetch-debug \"https://host/path.ics\"");
+    }
+    ExitCode::SUCCESS
 }
 
 fn run_preview(args: &[String]) -> ExitCode {

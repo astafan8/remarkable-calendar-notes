@@ -1925,7 +1925,7 @@ fn cursor_index_for_tap(displayed: &str, text_start_x: i32, tap_x: i32) -> usize
 /// http(s) scheme is left as typed (a plain `http://` URL is still refused
 /// at fetch time). This is why an address pasted with a stray leading space
 /// — or entered without the scheme — no longer trips the "non-HTTPS" guard.
-fn normalize_https_url(raw: &str) -> String {
+pub(crate) fn normalize_https_url(raw: &str) -> String {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return String::new();
