@@ -3,7 +3,6 @@
 set -eu
 
 include_system_log="${INCLUDE_SYSTEM_LOG:-0}"
-output_encoding="${OUTPUT_ENCODING:-raw}"
 work="$(mktemp -d /tmp/calendar-notes-diagnostics.XXXXXX)"
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 
@@ -107,8 +106,6 @@ Calendar Notes excludes calendar contents, source URLs, credentials, and
 tokens from its own log. Review optional xochitl logs before sharing.
 EOF
 
-if [ "$output_encoding" = "base64" ]; then
-    tar -czf - -C "$work" . | base64
-else
-    tar -czf - -C "$work" .
-fi
+# Stream the archive as raw bytes over the SSH channel; the tablet has no
+# `base64`, and ssh's stdout is binary-safe.
+tar -czf - -C "$work" .
