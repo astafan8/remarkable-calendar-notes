@@ -86,9 +86,25 @@ pub fn decode(raw: i32) -> (VkbKey, Modifiers) {
         KEY_RIGHT => VkbKey::ArrowRight,
         KEY_HOME => VkbKey::Home,
         KEY_END => VkbKey::End,
-        c if c >= 0x20 => char::from_u32(c as u32)
-            .map(VkbKey::Char)
-            .unwrap_or(VkbKey::Unknown),
+        c if c >= 0x20 => match char::from_u32(c as u32) {
+            // AppLoad's virtual keyboard emits letter keys in a fixed
+            // (upper) case and reports the real intent via the Shift
+            // modifier. Deriving case from Shift here makes unshifted
+            // typing lowercase (and Shift/caps uppercase); without this,
+            // everything the user types — e.g. a case-sensitive URL path —
+            // comes out ALL CAPS. Non-letters (digits, punctuation) are
+            // emitted directly and pass through unchanged.
+            Some(ch) if ch.is_ascii_alphabetic() => {
+                let cased = if modifiers.shift {
+                    ch.to_ascii_uppercase()
+                } else {
+                    ch.to_ascii_lowercase()
+                };
+                VkbKey::Char(cased)
+            }
+            Some(ch) => VkbKey::Char(ch),
+            None => VkbKey::Unknown,
+        },
         _ => VkbKey::Unknown,
     };
     (key, modifiers)
@@ -170,11 +186,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn decode_extracts_shift_modifier_and_uppercase_character_code() {
+    fn decode_extracts_shift_modifier_and_uppercases_the_letter() {
         let (key, mods) = decode('a' as i32 | SHIFT_MOD);
-        assert_eq!(key, VkbKey::Char('a'));
+        assert_eq!(key, VkbKey::Char('A'));
         assert!(mods.shift);
         assert!(!mods.ctrl);
+    }
+
+    #[test]
+    fn letter_case_follows_shift_not_the_raw_key_case() {
+        // AppLoad emits letter keys in uppercase; an unshifted press must
+        // become lowercase (this is the bug that stored ALL-CAPS URLs).
+        assert_eq!(decode('W' as i32).0, VkbKey::Char('w'));
+        assert_eq!(decode('W' as i32 | SHIFT_MOD).0, VkbKey::Char('W'));
+        // A lowercase base code also honours Shift, so the logic is robust
+        // to either keyboard convention.
+        assert_eq!(decode('w' as i32).0, VkbKey::Char('w'));
+        assert_eq!(decode('w' as i32 | SHIFT_MOD).0, VkbKey::Char('W'));
+        // Digits and punctuation are emitted directly and are unaffected by
+        // Shift — a URL's '/', '_', '.', ':' and digits stay intact.
+        for c in ['/', '_', '.', ':', '-', '4', '@'] {
+            assert_eq!(decode(c as i32).0, VkbKey::Char(c));
+            assert_eq!(decode(c as i32 | SHIFT_MOD).0, VkbKey::Char(c));
+        }
     }
 
     #[test]
