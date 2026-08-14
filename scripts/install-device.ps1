@@ -2,8 +2,8 @@
 .SYNOPSIS
 Install an official Calendar Notes ZIP using one SSH password prompt.
 .DESCRIPTION
-Works with either the all-in-one remarkable-calendar-notes-<ver>.zip or the
-app-only -armv7.zip. The app is always installed; the optional xochitl
+Works with the all-in-one remarkable-calendar-notes-<ver>.zip release
+archive. The app is always installed; the optional xochitl
 sidebar launcher is installed only with -Sidebar.
 #>
 param(

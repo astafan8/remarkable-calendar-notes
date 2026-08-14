@@ -46,40 +46,38 @@ On the computer—not inside the SSH session—download these two files from
 the latest public
 [release](https://github.com/astafan8/remarkable-calendar-notes/releases):
 
-- `remarkable-calendar-notes-<version>-armv7.zip`
-- `remarkable-calendar-notes-<version>-armv7.zip.sha256`
+- `remarkable-calendar-notes-<version>.zip`
+- `remarkable-calendar-notes-<version>.zip.sha256`
 
-For reMarkable OS **3.27.x** only, you may instead download
-`remarkable-calendar-notes-<version>-xovi-sidebar.zip` and its `.sha256`.
-That archive contains the same AppLoad application plus an optional
-QMLDiff launcher that adds **Calendar Notes** to xochitl's normal sidebar.
-Do not install that companion on 3.26 or a future firmware version.
+This one archive contains everything: the AppLoad app, the optional OS
+3.27 sidebar launcher (`sidebar/`), the host-side installers and log
+collectors (`diagnostics/`), and these instructions. There are no other
+files to pick between.
 
 On Windows, verify the downloaded ZIP:
 
 ```powershell
-(Get-FileHash .\remarkable-calendar-notes-<version>-armv7.zip -Algorithm SHA256).Hash.ToLower()
-Get-Content .\remarkable-calendar-notes-<version>-armv7.zip.sha256
+(Get-FileHash .\remarkable-calendar-notes-<version>.zip -Algorithm SHA256).Hash.ToLower()
+Get-Content .\remarkable-calendar-notes-<version>.zip.sha256
 ```
 
-The two hashes must match. Keep the app ZIP intact for the recommended
-installer below. (It contains one `remarkable-calendar-notes` folder with
-the binary, `icon.png`, and `external.manifest.json`.)
+The two hashes must match. Keep the ZIP intact for the recommended
+installer below.
 
 ## 4. Install the app from the computer
 
-Also download and extract
-`remarkable-calendar-notes-<version>-diagnostics.zip`. On Windows, run:
+Extract the ZIP; the installer lives in its `diagnostics/` folder. On
+Windows, run:
 
 ```powershell
-.\install-device.ps1 -Bundle .\remarkable-calendar-notes-<version>-armv7.zip
+.\install-device.ps1 -Bundle .\remarkable-calendar-notes-<version>.zip
 ```
 
 On Linux/macOS:
 
 ```sh
 chmod +x install-device.sh
-./install-device.sh --bundle remarkable-calendar-notes-<version>-armv7.zip
+./install-device.sh --bundle remarkable-calendar-notes-<version>.zip
 ```
 
 This uses one SSH password prompt, copies the archive directly, and runs
@@ -89,14 +87,16 @@ execute the app, producing a blank window before the app can create logs.
 
 ### Optional: install the OS 3.27 sidebar launcher
 
-Pass the `-xovi-sidebar.zip` to the same installer instead:
+The same archive already contains the sidebar files, so just add the
+`-Sidebar` (PowerShell) / `--sidebar` flag to the same installer:
 
 ```powershell
-.\install-device.ps1 -Bundle .\remarkable-calendar-notes-<version>-xovi-sidebar.zip
+.\install-device.ps1 -Bundle .\remarkable-calendar-notes-<version>.zip -Sidebar
 ```
 
-It installs the app, repaired QMD launcher, and Qt icon resource, then
-rebuilds the hashtable. Restart XOVI/xochitl afterward.
+It installs the app, the repaired QMD launcher, and the Qt icon resource,
+then rebuilds the hashtable. Restart XOVI/xochitl afterward. Do not use
+this on 3.26 or a future firmware version.
 
 If xochitl fails to load correctly, SSH in and run:
 
@@ -106,8 +106,8 @@ rm /home/root/xovi/exthome/qt-resource-rebuilder/calendarNotesSidebar.rcc
 xovi/rebuild_hashtable
 ```
 
-Then restart XOVI/xochitl. This recovery risk is why the standard AppLoad
-bundle remains the default recommendation.
+Then restart XOVI/xochitl. This recovery risk is why the sidebar launcher
+is optional and left off unless you pass `-Sidebar` / `--sidebar`.
 
 ## 5. Start and try the app
 
@@ -118,8 +118,10 @@ bundle remains the default recommendation.
    calendar source.
 4. For the quickest test, choose **+ URL**, tap each large field and enter
    an HTTPS `.ics` subscription URL. Tap AppLoad's keyboard button in the
-   window chrome when the app asks for text, then tap **TEST** on the
-   saved source row.
+   window chrome when the app asks for text. Then tap **TEST** inside the
+   editor: the full result — or the complete error message — is printed,
+   wrapped, just under the button so you can read all of it. Each SET
+   sub-menu (File, URL, Google, iCloud) has its own **TEST** button.
 5. Return to the calendar and write in a day cell with **PEN**. Try
    **ERASE** and **LASSO**, then change
    between Day, Week, Work Week, Two Weeks, and Month to confirm that the
@@ -138,8 +140,8 @@ Google and iCloud setup need additional provider-specific details; see
   rerun `xovi/rebuild_hashtable` and restart XOVI.
 - **Blank Calendar Notes window:** releases 0.1.5 and newer show a visible
   startup error when state loading or the first framebuffer update fails,
-  and write a device log. Download the release's `-diagnostics.zip`,
-  extract it on the **computer connected to the tablet**, and run:
+  and write a device log. From the release zip's `diagnostics/` folder,
+  on the **computer connected to the tablet**, run:
 
   ```powershell
   .\collect-device-log.ps1

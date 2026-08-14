@@ -297,10 +297,11 @@ pub fn navigate(view: ViewMode, anchor: NaiveDate, delta: i32) -> NaiveDate {
             let day = anchor.day().min(days_in_month(year, month));
             NaiveDate::from_ymd_opt(year, month, day).unwrap()
         }
-        // A two-month page advances by two whole months so pages do not
-        // overlap.
+        // A two-month page shows the anchor month plus the next; PREV/NEXT
+        // slide the window by a single month so consecutive pages overlap
+        // by one month rather than jumping past a month.
         ViewMode::TwoMonths => {
-            let total = anchor.year() * 12 + (anchor.month() as i32 - 1) + 2 * delta;
+            let total = anchor.year() * 12 + (anchor.month() as i32 - 1) + delta;
             let year = total.div_euclid(12);
             let month = (total.rem_euclid(12) + 1) as u32;
             let day = anchor.day().min(days_in_month(year, month));
@@ -491,8 +492,10 @@ mod tests {
         let window = window_for(ViewMode::TwoMonths, d(2026, 3, 15));
         assert!(window.start <= d(2026, 3, 1));
         assert!(window.end >= d(2026, 4, 30));
-        assert_eq!(navigate(ViewMode::TwoMonths, d(2026, 3, 15), 1).month(), 5);
-        assert_eq!(navigate(ViewMode::TwoMonths, d(2026, 3, 15), -1).month(), 1);
+        // A two-month page slides by a single month: from March, NEXT lands
+        // in April and PREV in February.
+        assert_eq!(navigate(ViewMode::TwoMonths, d(2026, 3, 15), 1).month(), 4);
+        assert_eq!(navigate(ViewMode::TwoMonths, d(2026, 3, 15), -1).month(), 2);
     }
 
     #[test]

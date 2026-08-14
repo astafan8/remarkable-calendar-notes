@@ -34,9 +34,11 @@ pub const GRAY: u8 = 160;
 /// can see what they are about to remove (as on the native notebook).
 pub const LIGHT_GRAY: u8 = 210;
 
-/// Which typeface `draw_text` should use. The calendar chrome uses the
-/// compact built-in [`Font::Bitmap`]; the settings menu uses the embedded,
-/// anti-aliased JetBrains Mono [`Font::Ui`].
+/// Which typeface `draw_text` should use. The calendar screen and the
+/// settings menu both use the embedded, anti-aliased JetBrains Mono
+/// [`Font::Ui`]; the compact built-in [`Font::Bitmap`] is kept only for the
+/// startup/fatal splash screens, which must render before any font asset is
+/// touched.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Font {
     Bitmap,

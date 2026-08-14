@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# Assembles an AppLoad bundle: a zip containing
-#   remarkable-calendar-notes/
-#     remarkable-calendar-notes   (the armv7 release binary)
-#     icon.png
-#     external.manifest.json
+# Assembles the single all-in-one AppLoad bundle, mirroring what the release
+# workflow publishes: one zip
 #
-# This matches the on-device layout AppLoad expects under
-# /home/root/xovi/exthome/appload/<app>/ — see docs/ARCHITECTURE.md.
+#   remarkable-calendar-notes-<ver>/
+#     remarkable-calendar-notes/    (app: binary, icon.png, external.manifest.json)
+#     sidebar/                      (calendarNotesSidebar.qmd + .rcc + README)
+#     diagnostics/                  (host-side installers + collectors)
+#     INSTALL.md
+#
+# The app subfolder matches the on-device layout AppLoad expects under
+# /home/root/xovi/exthome/appload/<app>/ — see docs/ARCHITECTURE.md. Both
+# Vellum recipes source this one zip; the installer picks the app out of it.
 #
 # Usage: scripts/package.sh
 # Requires: an armv7 release binary already built (scripts/build.sh --armv7).
@@ -30,38 +34,36 @@ fi
 RCC="$(command -v rcc || echo /usr/lib/qt5/bin/rcc)"
 
 VERSION="$(grep -m1 '"version"' external.manifest.json | sed -E 's/.*"version"\s*:\s*"([^"]+)".*/\1/')"
-STAGE="dist/stage/remarkable-calendar-notes"
-OUT="dist/remarkable-calendar-notes-${VERSION}-armv7.zip"
-SIDEBAR_STAGE="dist/stage-sidebar/remarkable-calendar-notes-xovi-sidebar"
-SIDEBAR_OUT="dist/remarkable-calendar-notes-${VERSION}-xovi-sidebar.zip"
+COMBINED="dist/stage-combined/remarkable-calendar-notes-${VERSION}"
+OUT="dist/remarkable-calendar-notes-${VERSION}.zip"
 
-rm -rf dist/stage
-mkdir -p "$STAGE"
-cp "$BIN" "$STAGE/remarkable-calendar-notes"
-cp assets/icon.png "$STAGE/icon.png"
-cp external.manifest.json "$STAGE/external.manifest.json"
-chmod 755 "$STAGE/remarkable-calendar-notes"
+rm -rf dist/stage-combined
+mkdir -p "$COMBINED/remarkable-calendar-notes" "$COMBINED/sidebar" "$COMBINED/diagnostics"
+
+cp "$BIN" "$COMBINED/remarkable-calendar-notes/remarkable-calendar-notes"
+cp assets/icon.png "$COMBINED/remarkable-calendar-notes/icon.png"
+cp external.manifest.json "$COMBINED/remarkable-calendar-notes/external.manifest.json"
+chmod 755 "$COMBINED/remarkable-calendar-notes/remarkable-calendar-notes"
+
+cp sidebar/3.27/calendarNotesSidebar.qmd "$COMBINED/sidebar/"
+"$RCC" --binary \
+  -o "$COMBINED/sidebar/calendarNotesSidebar.rcc" \
+  sidebar/3.27/calendarNotesSidebar.qrc
+cp sidebar/README.md "$COMBINED/sidebar/README.md"
+
+for helper in collect-device-log.ps1 collect-device-log.sh device-diagnostics-remote.sh \
+  diagnose-on-device.sh install-device.ps1 install-device.sh; do
+  cp "scripts/$helper" "$COMBINED/diagnostics/$helper"
+done
+cp docs/DIAGNOSTICS.md "$COMBINED/diagnostics/README.md"
+cp docs/INSTALL.md "$COMBINED/INSTALL.md"
 
 mkdir -p dist
 rm -f "$OUT"
-(cd dist/stage && zip -r -X "../../$OUT" remarkable-calendar-notes) >/dev/null
-
-rm -rf dist/stage-sidebar
-mkdir -p "$SIDEBAR_STAGE/appload" "$SIDEBAR_STAGE/qt-resource-rebuilder"
-cp -a "$STAGE" "$SIDEBAR_STAGE/appload/"
-cp sidebar/3.27/calendarNotesSidebar.qmd "$SIDEBAR_STAGE/qt-resource-rebuilder/"
-"$RCC" --binary \
-  -o "$SIDEBAR_STAGE/qt-resource-rebuilder/calendarNotesSidebar.rcc" \
-  sidebar/3.27/calendarNotesSidebar.qrc
-cp sidebar/README.md "$SIDEBAR_STAGE/"
-rm -f "$SIDEBAR_OUT"
-(cd dist/stage-sidebar && zip -r -X "../../$SIDEBAR_OUT" remarkable-calendar-notes-xovi-sidebar) >/dev/null
-rm -rf dist/stage dist/stage-sidebar
+(cd dist/stage-combined && zip -r -X "../../$(basename "$OUT")" "remarkable-calendar-notes-${VERSION}") >/dev/null
+rm -rf dist/stage-combined
 
 sha256sum "$OUT" > "$OUT.sha256"
 sha512sum "$OUT" > "$OUT.sha512"
-sha256sum "$SIDEBAR_OUT" > "$SIDEBAR_OUT.sha256"
-sha512sum "$SIDEBAR_OUT" > "$SIDEBAR_OUT.sha512"
 echo "Wrote $OUT"
-echo "Wrote $SIDEBAR_OUT"
 cat "$OUT.sha256"

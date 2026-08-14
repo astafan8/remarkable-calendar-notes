@@ -13,6 +13,7 @@ Cargo.lock text eol=lf linguist-generated=true
 *.yml text eol=lf
 *.yaml text eol=lf
 assets/icon.png binary
+*.png binary
 # Embedded fonts are binary and must never be line-ending converted.
 *.ttf binary
 # Keep the embedded font license verbatim (LF) rather than autocrlf'd.

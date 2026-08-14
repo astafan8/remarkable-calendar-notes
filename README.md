@@ -4,6 +4,10 @@ A read-only calendar app for the **reMarkable 2**, with persistent
 handwritten notes attached to individual dates. Runs as an [AppLoad](https://github.com/asivery/rm-appload)
 external QTFB app — no jailbreak/takeover mode required.
 
+| Month view (with handwritten notes) | Settings menu |
+| --- | --- |
+| [![Month view with handwritten notes](docs/screenshots/month.png)](docs/screenshots/month.png) | [![Settings menu](docs/screenshots/settings.png)](docs/screenshots/settings.png) |
+
 - **Views:** Day, Week, Work Week, Two Weeks, Month (the default), and Two
   Months, with compact, handwriting-friendly grids and `PREV`/`TODAY`/
   `NEXT` navigation; `TODAY` always jumps to the real current date at your
@@ -42,19 +46,22 @@ to xochitl's normal sidebar. In short:
 1. Connect the rM2 by USB and SSH to `root@10.11.99.1`.
 2. Install Vellum, then run `vellum add appload tripletap` and
    `xovi/rebuild_hashtable`.
-3. Download the latest ARMv7 bundle (or optional XOVI sidebar bundle) and
-   the matching diagnostics bundle from the public
+3. Download the single `remarkable-calendar-notes-<version>.zip` (and its
+   `.sha256`) from the public
    [main repository releases](https://github.com/astafan8/remarkable-calendar-notes/releases).
-4. Extract the diagnostics bundle on the computer, then install the app
-   with one SSH password prompt:
+   It contains the app, the optional sidebar, and the installers.
+4. Extract the zip on the computer, then install the app with one SSH
+   password prompt (the installer lives in the `diagnostics/` folder):
 
    ```powershell
-   .\install-device.ps1 -Bundle .\remarkable-calendar-notes-<version>-armv7.zip
+   .\install-device.ps1 -Bundle .\remarkable-calendar-notes-<version>.zip
    ```
 
    The Linux/macOS equivalent is `./install-device.sh --bundle <zip>`.
    The installer preserves the required executable permission, which a
-   Windows extract-and-copy workflow can otherwise lose.
+   Windows extract-and-copy workflow can otherwise lose. Add `-Sidebar`
+   (PowerShell) or `--sidebar` to also install the optional OS 3.27
+   xochitl sidebar launcher.
 5. Triple-press the tablet's power button to start XOVI, open
    **AppLoad**, tap **Reload**, then open **Calendar Notes**.
 
@@ -68,8 +75,8 @@ Run the collector on the **computer connected to the tablet**. It uses
 one SSH session/password prompt and still captures AppLoad launch errors
 when the app itself created no log:
 `scripts/collect-device-log.ps1` on Windows or
-`scripts/collect-device-log.sh` on Linux/macOS. Release downloads include
-a separate diagnostics bundle with the collectors and installers. See
+`scripts/collect-device-log.sh` on Linux/macOS. The same collectors ship
+inside the release zip's `diagnostics/` folder. See
 [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md).
 
 The source is now public, but `vellum add remarkable-calendar-notes` is

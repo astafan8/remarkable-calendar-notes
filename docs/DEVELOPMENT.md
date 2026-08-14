@@ -94,15 +94,15 @@ Deterministically regenerates `assets/icon.png` from code (see
 ## Releasing
 
 1. Bump `version` in the workspace `Cargo.toml`, `external.manifest.json`,
-   and `pkgver` in `vellum/packages/remarkable-calendar-notes/VELBUILD`
-   (an `xtask` test fails if these drift apart).
+   and `pkgver` in both `vellum/packages/*/VELBUILD` files (an `xtask`
+   test fails if these drift apart).
 2. Tag `vX.Y.Z` and push. `.github/workflows/release.yml` cross-builds
-   the armv7 binary inside `ghcr.io/toltec-dev/rust:v4.0`, packages an
-   AppLoad bundle zip, attaches it (with SHA-256/512 checksums) to a
-   GitHub Release in the public source repository, and creates a second
-   OS 3.27-only archive containing the same app plus the optional sidebar
-   QMD.
-3. Fill in the Vellum recipe's checksums from that release with
+   the static musl armv7 binary, packages the single all-in-one
+   `remarkable-calendar-notes-<ver>.zip` (app + optional sidebar +
+   host-side installers/collectors), and attaches it — with SHA-256/512
+   checksums — to a GitHub Release in the public source repository. That
+   one zip is the only published asset; both Vellum recipes source it.
+3. Fill in both Vellum recipes' checksums from that release with
    `scripts/update-vellum-checksums.sh`.
 4. Review and clean the VELBUILD, run Vellum's own lint/build tools, and
    use `scripts/publish-vellum-testing.sh` to prepare a fork branch.

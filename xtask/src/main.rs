@@ -306,10 +306,11 @@ mod packaging_tests {
     fn velbuild_source_and_release_workflow_agree_on_the_archive_name() {
         let text = velbuild();
         let pkgver = field(&text, "pkgver");
-        let archive = format!("remarkable-calendar-notes-{pkgver}-armv7.zip");
+        let archive = format!("remarkable-calendar-notes-{pkgver}.zip");
         let templated = archive.replace(pkgver, "$pkgver");
 
-        // The recipe downloads exactly what the release workflow uploads...
+        // The recipe downloads exactly the one archive the release workflow
+        // uploads...
         assert!(
             text.contains(&format!("/releases/download/v$pkgver/{templated}")),
             "source= must point at the release asset for v$pkgver"
@@ -322,17 +323,19 @@ mod packaging_tests {
         let workflow =
             fs::read_to_string(repo_root().join(".github/workflows/release.yml")).unwrap();
         assert!(
-            workflow.contains("dist/remarkable-calendar-notes-${version}-armv7.zip"),
+            workflow.contains("dist/remarkable-calendar-notes-${version}.zip"),
             "release.yml must build the archive name the recipe expects"
         );
-        // ...and the archive's single top-level directory is what the
-        // recipe's unpack()/package() steps reach into.
-        assert!(workflow.contains("dist/stage/remarkable-calendar-notes"));
-        assert!(workflow
-            .contains(r#"(cd dist/stage && zip -r -X "../../$out" remarkable-calendar-notes)"#));
-        assert!(text.contains("\"$srcdir\"/remarkable-calendar-notes/remarkable-calendar-notes"));
-        assert!(text.contains("\"$srcdir\"/remarkable-calendar-notes/icon.png"));
-        assert!(text.contains("\"$srcdir\"/remarkable-calendar-notes/external.manifest.json"));
+        // ...and the archive's single top-level directory
+        // (remarkable-calendar-notes-<ver>/) is what unpack()/package()
+        // reach into.
+        assert!(workflow.contains(
+            r#"(cd dist/stage-combined && zip -r -X "../../$out" "remarkable-calendar-notes-${version}")"#
+        ));
+        assert!(text.contains("remarkable-calendar-notes-$pkgver/remarkable-calendar-notes"));
+        assert!(text.contains(r#""$base"/remarkable-calendar-notes"#));
+        assert!(text.contains(r#""$base"/icon.png"#));
+        assert!(text.contains(r#""$base"/external.manifest.json"#));
     }
 
     #[test]
@@ -343,11 +346,16 @@ mod packaging_tests {
             assert!(workflow.contains(line), "release.yml must emit {line}");
         }
         // The publish job downloads the artifact into dist/ and uploads
-        // exactly those globs.
+        // exactly the single zip and its checksums — no per-piece archives
+        // or standalone .rcc.
         assert!(workflow.contains("path: dist"));
-        for glob in ["dist/*.zip", "dist/*.rcc", "dist/*.sha256", "dist/*.sha512"] {
+        for glob in ["dist/*.zip", "dist/*.sha256", "dist/*.sha512"] {
             assert!(workflow.contains(glob), "release.yml must upload {glob}");
         }
+        assert!(
+            !workflow.contains("dist/*.rcc"),
+            "the standalone .rcc must not be published as its own asset"
+        );
         assert!(!workflow.contains("remarkable-calendar-notes-releases"));
         assert!(!workflow.contains("secrets.PUBLIC_RELEASE_TOKEN"));
     }
@@ -385,7 +393,6 @@ mod packaging_tests {
             .contains("AppLoadLauncher.launchApplication(\"external::remarkable-calendar-notes\""));
         assert!(qmd.contains("calendarNotesSidebar\\"));
         assert!(qmd.contains("qrc:/remarkable-calendar-notes/icons/calendar-notes"));
-        assert!(recipe.contains("calendarNotesSidebar-3.27.rcc"));
         assert!(recipe.contains("calendarNotesSidebar.rcc"));
         let qrc =
             fs::read_to_string(repo_root().join("sidebar/3.27/calendarNotesSidebar.qrc")).unwrap();
@@ -393,14 +400,14 @@ mod packaging_tests {
     }
 
     #[test]
-    fn release_workflow_builds_the_optional_sidebar_archive() {
+    fn release_workflow_publishes_only_the_single_all_in_one_archive() {
         let workflow =
             fs::read_to_string(repo_root().join(".github/workflows/release.yml")).unwrap();
-        assert!(workflow.contains("dist/remarkable-calendar-notes-${version}-xovi-sidebar.zip"));
+        // The one published archive bundles the sidebar (qmd + rcc) and the
+        // diagnostics/installers, so no separate per-piece zips exist.
         assert!(workflow.contains("sidebar/3.27/calendarNotesSidebar.qmd"));
         assert!(workflow.contains("sidebar/3.27/calendarNotesSidebar.qrc"));
-        assert!(workflow.contains("calendarNotesSidebar-3.27.rcc"));
-        assert!(workflow.contains("remarkable-calendar-notes-xovi-sidebar/qt-resource-rebuilder"));
+        assert!(workflow.contains("calendarNotesSidebar.rcc"));
         for helper in [
             "collect-device-log.ps1",
             "collect-device-log.sh",
@@ -410,7 +417,19 @@ mod packaging_tests {
         ] {
             assert!(
                 workflow.contains(helper),
-                "diagnostics release must include {helper}"
+                "the all-in-one archive must include {helper}"
+            );
+        }
+        // The obsolete per-piece archive names must be gone entirely.
+        for gone in [
+            "-armv7.zip",
+            "-xovi-sidebar.zip",
+            "-diagnostics.zip",
+            "calendarNotesSidebar-3.27.rcc",
+        ] {
+            assert!(
+                !workflow.contains(gone),
+                "release.yml must no longer reference {gone}"
             );
         }
     }
@@ -425,8 +444,8 @@ mod packaging_tests {
         assert!(workflow.contains("stage-combined"));
         assert!(workflow.contains(r#""$combined/sidebar/calendarNotesSidebar.rcc""#));
         assert!(workflow.contains(r#""$combined/diagnostics""#));
-        assert!(workflow.contains(r#"sha256sum "$all_out""#));
-        assert!(workflow.contains(r#"sha512sum "$all_out""#));
+        assert!(workflow.contains(r#"sha256sum "$out""#));
+        assert!(workflow.contains(r#"sha512sum "$out""#));
     }
 
     #[test]

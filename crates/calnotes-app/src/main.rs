@@ -64,6 +64,7 @@ fn run_preview(args: &[String]) -> ExitCode {
     let mut view_mode: Option<calnotes_core::model::ViewMode> = None;
     let mut refresh = false;
     let mut settings = false;
+    let mut demo_ink = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -79,6 +80,7 @@ fn run_preview(args: &[String]) -> ExitCode {
             }
             "--refresh" => refresh = true,
             "--settings" => settings = true,
+            "--demo-ink" => demo_ink = true,
             _ => {}
         }
         i += 1;
@@ -96,6 +98,9 @@ fn run_preview(args: &[String]) -> ExitCode {
     }
     if refresh {
         app.refresh_blocking();
+    }
+    if demo_ink {
+        app.add_demo_scribbles();
     }
     if settings {
         app.show_settings_for_preview();

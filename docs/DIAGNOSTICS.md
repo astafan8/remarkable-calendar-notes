@@ -141,18 +141,19 @@ so review them before sharing.
 
 ## Repairing installation permissions
 
-The diagnostics bundle also contains a one-password installer. It sends
-the official release ZIP directly to the tablet, installs it in the
-correct AppLoad/XOVI paths, and explicitly restores executable permission:
+The `diagnostics/` folder inside the release ZIP also contains a
+one-password installer. It sends the official release ZIP directly to the
+tablet, installs it in the correct AppLoad/XOVI paths, and explicitly
+restores executable permission:
 
 ```powershell
-.\install-device.ps1 -Bundle .\remarkable-calendar-notes-<version>-armv7.zip
+.\install-device.ps1 -Bundle .\remarkable-calendar-notes-<version>.zip
 ```
 
 ```sh
-./install-device.sh --bundle remarkable-calendar-notes-<version>-armv7.zip
+./install-device.sh --bundle remarkable-calendar-notes-<version>.zip
 ```
 
-The same installer accepts the `-xovi-sidebar.zip` bundle and installs
-both the QMD launcher and its Qt icon resource before rebuilding the
-device hashtable.
+Add `-Sidebar` (PowerShell) or `--sidebar` to also install the optional
+QMD launcher and its Qt icon resource from the same ZIP before rebuilding
+the device hashtable.
