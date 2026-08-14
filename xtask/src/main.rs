@@ -416,6 +416,20 @@ mod packaging_tests {
     }
 
     #[test]
+    fn release_workflow_builds_the_all_in_one_archive() {
+        let workflow =
+            fs::read_to_string(repo_root().join(".github/workflows/release.yml")).unwrap();
+        // A single convenience archive with the app, the sidebar, and the
+        // diagnostics/installers, plus its checksums.
+        assert!(workflow.contains("dist/remarkable-calendar-notes-${version}.zip"));
+        assert!(workflow.contains("stage-combined"));
+        assert!(workflow.contains(r#""$combined/sidebar/calendarNotesSidebar.rcc""#));
+        assert!(workflow.contains(r#""$combined/diagnostics""#));
+        assert!(workflow.contains(r#"sha256sum "$all_out""#));
+        assert!(workflow.contains(r#"sha512sum "$all_out""#));
+    }
+
+    #[test]
     fn checksum_entries_name_exactly_the_source_files() {
         let text = velbuild();
         let pkgver = field(&text, "pkgver");

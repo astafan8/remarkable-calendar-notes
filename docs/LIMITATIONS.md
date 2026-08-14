@@ -110,16 +110,19 @@ display window (see `recurrence::MAX_INSTANCES`,
 combined with an old `DTSTART` must never be able to hang the UI or
 exhaust memory on a resource-constrained e-reader.
 
-## Font: a small built-in bitmap font, not an embedded typeface
+## Fonts: a built-in bitmap font, plus JetBrains Mono in the settings menu
 
-Grid chrome (day numbers, view/action button labels, event summaries) is
-rendered with a compact, hand-authored 3x5 pixel bitmap font covering
-uppercase letters, digits, and basic punctuation — see
-`calnotes_core::render`. This keeps rendering deterministic and
-dependency-/license-free, at the cost of a smaller character set than a
-real typeface; lowercase text is folded to uppercase. Full-fidelity
-free-form text is still captured via handwritten ink, which has no such
-limitation.
+The calendar chrome (day numbers, view/action button labels, month names,
+event summaries) is rendered with a compact, hand-authored 3x5 pixel
+bitmap font — see `calnotes_core::render` — for a crisp, deterministic
+look; that font is uppercase-only and covers digits and basic
+punctuation. The settings ("SET") menu instead uses an embedded Latin
+subset of **JetBrains Mono** (SIL OFL), rasterized with the pure-Rust
+`ab_glyph` crate, so emails, Apple IDs and passwords render in real
+mixed-case, monospaced glyphs (including `@`, `.`, `/`, `_`, …). Neither
+path depends on Qt or a system font, so the binary still links statically.
+Full-fidelity free-form notes are captured via handwritten ink, which has
+no character-set limitation.
 
 ## AppLoad cannot let an external app open its keyboard
 

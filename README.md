@@ -84,8 +84,14 @@ xochitl QML; see [docs/INSTALL.md](docs/INSTALL.md) and
 
 All configuration — calendar sources, the fixed UTC offset, the active
 view — is done on-device via large settings fields and AppLoad's virtual
-keyboard. Each source has a **TEST** action. See
-[docs/SOURCES.md](docs/SOURCES.md).
+keyboard. Each source has a **TEST** action.
+
+**Adding an ICS URL** (e.g. a public holidays calendar): tap **SET** →
+**+ HTTPS ICS**, tap the **ICS URL** field, type
+`https://www.officeholidays.com/ics/netherlands` (the `https://` is
+optional — it's assumed — and leading/trailing spaces are ignored), tap
+**SAVE**, then **TEST** on that row to confirm it fetches. See
+[docs/SOURCES.md](docs/SOURCES.md) for Google, iCloud, and local files.
 
 ## Documentation
 

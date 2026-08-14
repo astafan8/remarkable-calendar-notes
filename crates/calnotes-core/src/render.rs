@@ -2,13 +2,14 @@
 //! QTFB backend and the desktop preview (PNG/PPM) command so the exact same
 //! drawing code is exercised by tests on any platform.
 //!
-//! Text uses a small hand-authored 3x5 monospace bitmap font (uppercase,
-//! digits, and a handful of punctuation) rather than an embedded font
-//! asset — it keeps rendering fully deterministic, dependency-free, and
-//! license-free, at the cost of only supporting a compact character set.
-//! Longer free-form text (event summaries, notes) is still captured in
-//! full via handwritten ink; the bitmap font is used for grid chrome
-//! (day numbers, weekday/month labels, times).
+//! Two typefaces are available via [`Font`]. The calendar chrome (buttons,
+//! month names, day numbers) uses a compact, hand-authored 3x5 bitmap font
+//! for a crisp, deterministic look. The settings menu — where the user
+//! types emails, Apple IDs and passwords and needs real mixed-case,
+//! monospaced glyphs — uses a Latin subset of JetBrains Mono (SIL OFL,
+//! embedded via `include_bytes!`) rasterized anti-aliased by the pure-Rust
+//! `ab_glyph` crate. Neither path needs Qt or a system font, so the binary
+//! still links statically for musl.
 
 use crate::view::Rect;
 
@@ -32,6 +33,15 @@ pub const GRAY: u8 = 160;
 /// trail shown under the pen while the eraser tool is active, so the user
 /// can see what they are about to remove (as on the native notebook).
 pub const LIGHT_GRAY: u8 = 210;
+
+/// Which typeface `draw_text` should use. The calendar chrome uses the
+/// compact built-in [`Font::Bitmap`]; the settings menu uses the embedded,
+/// anti-aliased JetBrains Mono [`Font::Ui`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Font {
+    Bitmap,
+    Ui,
+}
 
 fn gray_to_rgb565(gray: u8) -> u16 {
     let r = (gray as u16 >> 3) & 0x1F;
@@ -199,10 +209,21 @@ impl FrameBuffer {
         }
     }
 
-    pub fn draw_text(&mut self, x: i32, y: i32, text: &str, gray: u8, scale: i32) {
+    /// Draw `text` with its visual top-left at `(x, y)`, in the given grey,
+    /// using the selected [`Font`]. The `Bitmap` font is the compact
+    /// built-in calendar font; the `Ui` font is the embedded, anti-aliased
+    /// JetBrains Mono used in the settings menu.
+    pub fn draw_text(&mut self, x: i32, y: i32, text: &str, gray: u8, scale: i32, font: Font) {
+        match font {
+            Font::Bitmap => self.draw_text_bitmap(x, y, text, gray, scale),
+            Font::Ui => self.draw_text_ui(x, y, text, gray, scale),
+        }
+    }
+
+    fn draw_text_bitmap(&mut self, x: i32, y: i32, text: &str, gray: u8, scale: i32) {
         let mut cursor_x = x;
         for c in text.chars() {
-            if let Some(glyph) = font_glyph(c) {
+            if let Some(glyph) = bitmap_glyph(c) {
                 for (row, bits) in glyph.iter().enumerate() {
                     for col in 0..3 {
                         if bits & (1 << (2 - col)) != 0 {
@@ -223,9 +244,87 @@ impl FrameBuffer {
         }
     }
 
-    /// Pixel width `draw_text` would occupy for `text` at `scale`.
-    pub fn text_width(text: &str, scale: i32) -> i32 {
-        text.chars().count() as i32 * 4 * scale
+    fn draw_text_ui(&mut self, x: i32, y: i32, text: &str, gray: u8, scale: i32) {
+        use ab_glyph::{Font as _, ScaleFont};
+        let px = (scale.max(1) as f32) * PX_PER_SCALE;
+        let font = ui_font();
+        let scaled = font.as_scaled(px);
+        let baseline = y as f32 + scaled.ascent();
+        let mut caret = x as f32;
+        let mut previous: Option<ab_glyph::GlyphId> = None;
+        for c in text.chars() {
+            let id = font.glyph_id(c);
+            if let Some(prev) = previous {
+                caret += scaled.kern(prev, id);
+            }
+            let glyph = id.with_scale_and_position(px, ab_glyph::point(caret, baseline));
+            if let Some(outline) = font.outline_glyph(glyph) {
+                let bounds = outline.px_bounds();
+                let ox = bounds.min.x as i32;
+                let oy = bounds.min.y as i32;
+                outline.draw(|gx, gy, coverage| {
+                    self.blend_gray(ox + gx as i32, oy + gy as i32, gray, coverage);
+                });
+            }
+            caret += scaled.h_advance(id);
+            previous = Some(id);
+        }
+    }
+
+    /// Pixel width `draw_text` would occupy for `text` at `scale` in `font`.
+    pub fn text_width(text: &str, scale: i32, font: Font) -> i32 {
+        match font {
+            Font::Bitmap => text.chars().count() as i32 * 4 * scale,
+            Font::Ui => {
+                use ab_glyph::{Font as _, ScaleFont};
+                let px = (scale.max(1) as f32) * PX_PER_SCALE;
+                let scaled = ui_font().as_scaled(px);
+                let mut width = 0.0f32;
+                let mut previous: Option<ab_glyph::GlyphId> = None;
+                for c in text.chars() {
+                    let id = ui_font().glyph_id(c);
+                    if let Some(prev) = previous {
+                        width += scaled.kern(prev, id);
+                    }
+                    width += scaled.h_advance(id);
+                    previous = Some(id);
+                }
+                width.ceil() as i32
+            }
+        }
+    }
+
+    /// The vertical space one line of `scale`-sized text occupies in `font`,
+    /// used to position and stack text.
+    pub fn text_height(scale: i32, font: Font) -> i32 {
+        match font {
+            // 5 glyph rows plus two rows of leading, matching how the bitmap
+            // font stacks vertically.
+            Font::Bitmap => 7 * scale,
+            Font::Ui => {
+                use ab_glyph::{Font as _, ScaleFont};
+                let px = (scale.max(1) as f32) * PX_PER_SCALE;
+                ui_font().as_scaled(px).height().ceil() as i32
+            }
+        }
+    }
+
+    /// Alpha-blend a glyph pixel of grey `text_gray` with `coverage` in
+    /// `0.0..=1.0` over the existing background pixel.
+    fn blend_gray(&mut self, x: i32, y: i32, text_gray: u8, coverage: f32) {
+        if coverage <= 0.0
+            || x < 0
+            || y < 0
+            || x as usize >= self.width
+            || y as usize >= self.height
+        {
+            return;
+        }
+        let idx = y as usize * self.width + x as usize;
+        let background = rgb565_to_gray(self.pixels[idx]);
+        let c = coverage.min(1.0);
+        let blended = (background as f32 * (1.0 - c) + text_gray as f32 * c).round() as u8;
+        self.pixels[idx] = gray_to_rgb565(blended);
     }
 
     /// Clamp `rect` to the buffer, returning `None` if nothing of it is
@@ -314,13 +413,38 @@ impl FrameBuffer {
     }
 }
 
+/// The embedded settings-menu font (a Latin subset of JetBrains Mono, SIL
+/// OFL — see `assets/fonts/`). Parsed once and reused for every `Font::Ui`
+/// `draw_text` call.
+static FONT_BYTES: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/fonts/JetBrainsMono-Regular.ttf"
+));
+
+/// Pixels of font height per historical `scale` unit. Chosen so the UI-font
+/// call sites (which pass `scale` values of 2–7) render at a comparable
+/// size to the bitmap font.
+const PX_PER_SCALE: f32 = 8.0;
+
+fn ui_font() -> &'static ab_glyph::FontRef<'static> {
+    use std::sync::OnceLock;
+    static FONT: OnceLock<ab_glyph::FontRef<'static>> = OnceLock::new();
+    FONT.get_or_init(|| {
+        ab_glyph::FontRef::try_from_slice(FONT_BYTES).expect("embedded UI font must parse")
+    })
+}
+
+/// Recover an approximate grey level (0=black..255=white) from a stored
+/// RGB565 grayscale pixel, for alpha-blending anti-aliased text over it.
+fn rgb565_to_gray(pixel: u16) -> u8 {
+    (((pixel >> 11) & 0x1F) as u32 * 255 / 31) as u8
+}
+
 /// A 3-column x 5-row bitmap glyph, one `u8` per row using its 3 low bits
-/// (bit 2 = leftmost column).
+/// (bit 2 = leftmost column). Used by [`Font::Bitmap`].
 type Glyph = [u8; 5];
 
-fn font_glyph(c: char) -> Option<Glyph> {
-    const O: u8 = 0; // silence rustfmt alignment noise below
-    let _ = O;
+fn bitmap_glyph(c: char) -> Option<Glyph> {
     Some(match c.to_ascii_uppercase() {
         ' ' => [0b000, 0b000, 0b000, 0b000, 0b000],
         '0' => [0b111, 0b101, 0b101, 0b101, 0b111],
@@ -367,7 +491,6 @@ fn font_glyph(c: char) -> Option<Glyph> {
         '?' => [0b111, 0b001, 0b010, 0b000, 0b010],
         '!' => [0b010, 0b010, 0b010, 0b000, 0b010],
         '\'' => [0b010, 0b010, 0b000, 0b000, 0b000],
-        // Symbols needed to enter emails, Apple IDs, and passwords.
         '@' => [0b111, 0b101, 0b111, 0b100, 0b011],
         '_' => [0b000, 0b000, 0b000, 0b000, 0b111],
         '+' => [0b000, 0b010, 0b111, 0b010, 0b000],
@@ -412,16 +535,26 @@ mod tests {
     }
 
     #[test]
-    fn email_and_password_symbols_have_visible_glyphs() {
-        // Entering an Apple ID / email / password needs these to render.
-        for c in [
-            '@', '.', '_', '+', '=', '#', '%', '&', '*', '(', ')', ';', '$', ':', '-', '/',
-        ] {
-            assert!(font_glyph(c).is_some(), "missing glyph for {c:?}");
+    fn email_and_password_symbols_render_visible_pixels() {
+        // Entering an Apple ID / email / password needs these to render in
+        // both fonts.
+        for font in [Font::Bitmap, Font::Ui] {
+            let mut fb = FrameBuffer::new(400, 40);
+            fb.draw_text(0, 0, "a.b@c_d+e=f#1$2", BLACK, 3, font);
+            assert!(fb.has_non_white_pixels());
         }
-        let mut fb = FrameBuffer::new(300, 16);
-        fb.draw_text(0, 0, "A.B@C_D", BLACK, 2);
-        assert!(fb.has_non_white_pixels());
+    }
+
+    #[test]
+    fn text_has_a_positive_measured_width_and_height() {
+        for font in [Font::Bitmap, Font::Ui] {
+            assert!(FrameBuffer::text_width("Calendar", 3, font) > 0);
+            assert!(FrameBuffer::text_height(3, font) > 0);
+            // A longer string is wider than a shorter one at the same size.
+            assert!(
+                FrameBuffer::text_width("MMMMMM", 3, font) > FrameBuffer::text_width("M", 3, font)
+            );
+        }
     }
 
     #[test]
@@ -482,23 +615,28 @@ mod tests {
 
     #[test]
     fn draw_text_of_known_glyphs_sets_at_least_one_pixel() {
-        let mut fb = FrameBuffer::new(40, 20);
-        fb.draw_text(0, 0, "12", BLACK, 2);
-        let bytes = fb.as_rgb565_bytes();
-        let black = gray_to_rgb565(BLACK).to_le_bytes();
-        assert!(bytes.chunks_exact(2).any(|c| c == black));
+        let mut fb = FrameBuffer::new(60, 40);
+        fb.draw_text(0, 0, "12", BLACK, 3, Font::Bitmap);
+        assert!(fb.has_non_white_pixels());
     }
 
     #[test]
     fn text_width_scales_with_character_count_and_scale() {
-        assert_eq!(FrameBuffer::text_width("AB", 2), 16);
-        assert_eq!(FrameBuffer::text_width("", 2), 0);
+        assert_eq!(FrameBuffer::text_width("", 2, Font::Bitmap), 0);
+        // The bitmap font is fixed-pitch: two characters are exactly twice
+        // one, and doubling the scale doubles the width.
+        assert_eq!(FrameBuffer::text_width("AB", 2, Font::Bitmap), 16);
+        assert_eq!(FrameBuffer::text_width("AB", 4, Font::Bitmap), 32);
+        assert!(
+            FrameBuffer::text_width("AB", 2, Font::Ui) > FrameBuffer::text_width("A", 2, Font::Ui)
+        );
     }
 
     #[test]
     fn unsupported_characters_are_skipped_without_panicking() {
         let mut fb = FrameBuffer::new(20, 10);
-        fb.draw_text(0, 0, "a~$", BLACK, 1); // 'a' folds to 'A'; '~','$' unsupported
+        fb.draw_text(0, 0, "a~$", BLACK, 1, Font::Bitmap); // '~' unsupported in bitmap
+        fb.draw_text(0, 0, "a~$", BLACK, 1, Font::Ui);
     }
 
     #[test]

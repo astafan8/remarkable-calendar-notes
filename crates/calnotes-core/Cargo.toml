@@ -14,6 +14,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
 base64 = "0.23"
+# Pure-Rust glyph rasterizer (no C / no system fonts), so real anti-aliased
+# text renders while the binary still links statically for musl.
+ab_glyph = "0.2"
 
 [dev-dependencies]
 tempfile = "3"

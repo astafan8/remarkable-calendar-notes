@@ -63,6 +63,7 @@ fn run_preview(args: &[String]) -> ExitCode {
     let mut out_path = "preview.ppm".to_string();
     let mut view_mode: Option<calnotes_core::model::ViewMode> = None;
     let mut refresh = false;
+    let mut settings = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -77,6 +78,7 @@ fn run_preview(args: &[String]) -> ExitCode {
                 view_mode = args.get(i).and_then(|v| parse_view_mode(v));
             }
             "--refresh" => refresh = true,
+            "--settings" => settings = true,
             _ => {}
         }
         i += 1;
@@ -94,6 +96,9 @@ fn run_preview(args: &[String]) -> ExitCode {
     }
     if refresh {
         app.refresh_blocking();
+    }
+    if settings {
+        app.show_settings_for_preview();
     }
     let fb = app.render();
     if let Err(e) = std::fs::write(&out_path, fb.to_ppm()) {
@@ -154,9 +159,10 @@ mod device_loop {
     const STARTUP_REPAINT_COUNT: u8 = 5;
 
     /// A finger contact only counts as a deliberate tap if it lasts less
-    /// than this and moves less than [`TAP_MOVE_THRESHOLD`] pixels.
-    const TAP_MAX_DURATION: Duration = Duration::from_millis(400);
-    const TAP_MOVE_THRESHOLD: i32 = 40;
+    /// than this and moves less than [`TAP_MOVE_THRESHOLD`] pixels. Generous
+    /// so an ordinary tap on a calendar cell reliably opens that day.
+    const TAP_MAX_DURATION: Duration = Duration::from_millis(700);
+    const TAP_MOVE_THRESHOLD: i32 = 60;
 
     /// In-progress finger contact, used for palm rejection (see the event
     /// loop). A tap is a single, brief, still contact with no pen activity.
@@ -307,24 +313,35 @@ mod device_loop {
                     let mut needs_full_redraw = false;
                     for ev in events {
                         match ev.kind {
-                            input_kind::TOUCH_PRESS => match touch.as_mut() {
-                                None => {
-                                    touch = Some(TouchTrack {
-                                        start_x: ev.x,
-                                        start_y: ev.y,
-                                        start: Instant::now(),
-                                        moved: false,
-                                        invalid: pen_down,
-                                        active_points: 1,
-                                    });
+                            input_kind::TOUCH_PRESS => {
+                                if app.touch_hits_ui(ev.x, ev.y) {
+                                    // Buttons and settings react immediately to
+                                    // a finger, as they always did — palm
+                                    // rejection is only for the writing area.
+                                    app.handle_touch_tap(ev.x, ev.y);
+                                    needs_full_redraw = true;
+                                    touch = None;
+                                } else {
+                                    match touch.as_mut() {
+                                        None => {
+                                            touch = Some(TouchTrack {
+                                                start_x: ev.x,
+                                                start_y: ev.y,
+                                                start: Instant::now(),
+                                                moved: false,
+                                                invalid: pen_down,
+                                                active_points: 1,
+                                            });
+                                        }
+                                        // A second simultaneous contact means a
+                                        // palm, not a finger tap.
+                                        Some(track) => {
+                                            track.active_points += 1;
+                                            track.invalid = true;
+                                        }
+                                    }
                                 }
-                                // A second simultaneous contact means a palm,
-                                // not a finger tap.
-                                Some(track) => {
-                                    track.active_points += 1;
-                                    track.invalid = true;
-                                }
-                            },
+                            }
                             input_kind::TOUCH_UPDATE => {
                                 if let Some(track) = touch.as_mut() {
                                     if (ev.x - track.start_x).abs() > TAP_MOVE_THRESHOLD

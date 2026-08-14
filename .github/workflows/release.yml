@@ -118,6 +118,24 @@ jobs:
           sha512sum dist/calendarNotesSidebar-3.27.rcc \
             > dist/calendarNotesSidebar-3.27.rcc.sha512
 
+          # All-in-one convenience archive: the AppLoad app, the optional
+          # sidebar (qmd + rcc), and the host-side installers/collectors, so
+          # everything can be downloaded as a single file. The installer
+          # picks the app out of it and only touches the sidebar with
+          # --sidebar / -Sidebar.
+          combined="dist/stage-combined/remarkable-calendar-notes-${version}"
+          mkdir -p "$combined/sidebar"
+          cp -a dist/stage/remarkable-calendar-notes "$combined/"
+          cp sidebar/3.27/calendarNotesSidebar.qmd "$combined/sidebar/"
+          cp dist/calendarNotesSidebar-3.27.rcc "$combined/sidebar/calendarNotesSidebar.rcc"
+          cp sidebar/README.md "$combined/sidebar/README.md"
+          cp -a dist/stage-diagnostics/remarkable-calendar-notes-diagnostics "$combined/diagnostics"
+          cp docs/INSTALL.md "$combined/INSTALL.md"
+          all_out="dist/remarkable-calendar-notes-${version}.zip"
+          (cd dist/stage-combined && zip -r -X "../../$all_out" "remarkable-calendar-notes-${version}")
+          sha256sum "$all_out" > "$all_out.sha256"
+          sha512sum "$all_out" > "$all_out.sha512"
+
       - uses: actions/upload-artifact@v7
         with:
           name: remarkable-calendar-notes-armv7
@@ -147,14 +165,26 @@ jobs:
             dist/*.sha512
           generate_release_notes: true
           body: |
-            Automated reMarkable 2 builds:
+            Automated reMarkable 2 builds. **For most people the one file
+            you need is the all-in-one zip:**
 
-            - `*-armv7.zip`: standard AppLoad application.
-            - `*-xovi-sidebar.zip`: the same app plus an optional,
-              firmware-pinned OS 3.27 xochitl sidebar launcher.
-            - `*-diagnostics.zip`: one-password host-side installers and
-              log collectors for Windows, Linux, and macOS. Run these on
-              the computer connected to the tablet.
+            - `remarkable-calendar-notes-<ver>.zip` — **all-in-one**: the
+              app, the optional sidebar, and the host-side installers and
+              log collectors, in a single download. Extract it and run
+              `install-device` from the `diagnostics/` folder.
+
+            The individual pieces are also published if you prefer them:
+
+            - `*-armv7.zip`: app only (also what the Vellum recipe uses).
+            - `*-xovi-sidebar.zip`: app plus the optional, firmware-pinned
+              OS 3.27 xochitl sidebar launcher.
+            - `*-diagnostics.zip`: host-side installers and collectors.
+            - `calendarNotesSidebar-3.27.rcc`: the standalone sidebar icon
+              resource (used by the Vellum sidebar recipe).
+
+            The binary is fully static (musl) and launches via a `/bin/sh`
+            wrapper that repairs the executable bit, so it installs and runs
+            regardless of how the files were copied.
 
             **Vellum**: this release is not automatically published to
             Vellum. See `scripts/publish-vellum-testing.sh` and

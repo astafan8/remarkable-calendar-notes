@@ -1,7 +1,7 @@
 maintainer="astafan8 <astafan8@users.noreply.github.com>"
 status="experimental"
 pkgname=remarkable-calendar-notes-sidebar
-pkgver=0.1.12
+pkgver=0.1.13
 pkgrel=0
 upstream_author="astafan8"
 category="ui"

@@ -18,7 +18,7 @@
 use calnotes_core::config::AppState;
 use calnotes_core::model::{CalendarSource, Event, SourceKind, SourceStatus, ViewMode};
 use calnotes_core::recurrence::Window;
-use calnotes_core::render::{FrameBuffer, BLACK, GRAY, LIGHT_GRAY, WHITE};
+use calnotes_core::render::{Font, FrameBuffer, BLACK, GRAY, LIGHT_GRAY, WHITE};
 use calnotes_core::sources::google;
 use calnotes_core::timeutil::UtcOffset;
 use calnotes_core::vkb::{TextField, VkbKey};
@@ -658,7 +658,10 @@ impl App {
     }
 
     fn grid_cells(&self) -> Vec<view::DateCell> {
-        let month_gutter = if self.state.config.view_mode == ViewMode::Month {
+        let month_gutter = if matches!(
+            self.state.config.view_mode,
+            ViewMode::Month | ViewMode::TwoMonths
+        ) {
             MONTH_LABEL_W
         } else {
             0
@@ -776,6 +779,33 @@ impl App {
             }
         }
         None
+    }
+
+    /// Whether a touch at `(x, y)` lands on interactive chrome (a toolbar
+    /// button, or anywhere on the settings screen) rather than the writing
+    /// surface. Chrome touches act immediately so buttons stay responsive;
+    /// writing-surface touches go through palm rejection before opening a
+    /// day.
+    pub fn touch_hits_ui(&self, x: i32, y: i32) -> bool {
+        if self.screen == Screen::Settings {
+            return true;
+        }
+        self.view_buttons().iter().any(|(_, r)| within(*r, x, y))
+            || self.action_buttons().iter().any(|(_, r)| within(*r, x, y))
+    }
+
+    /// Desktop-preview helper: open the settings screen with a sample source
+    /// editor so the settings font/layout can be rendered. Not used on
+    /// device.
+    pub fn show_settings_for_preview(&mut self) {
+        self.screen = Screen::Settings;
+        let mut editor = SourceEditor::new_for_add(SourceKindChoice::Icloud);
+        editor.label = TextField::new("Family iCloud");
+        editor.apple_id = TextField::new("john.doe@icloud.com");
+        editor.app_specific_password = TextField::new("abcd-efgh-ijkl-mnop");
+        editor.calendar_url = TextField::new("https://caldav.icloud.com/1234567/calendars/home/");
+        editor.focus = EditorField::CalendarUrl;
+        self.editor = Some(editor);
     }
     fn perform_action(&mut self, action: Action) {
         match action {
@@ -999,7 +1029,7 @@ impl App {
         fb.clear(WHITE);
         for (mode, rect) in self.view_buttons() {
             let active = mode == self.state.config.view_mode;
-            draw_button(fb, rect, mode.label(), active);
+            draw_button(fb, rect, mode.label(), active, Font::Bitmap);
         }
         for (action, rect) in self.action_buttons() {
             let active = matches!(
@@ -1008,25 +1038,49 @@ impl App {
                     | (Action::Erase, InkTool::Erase)
                     | (Action::Lasso, InkTool::Lasso)
             );
-            draw_button(fb, rect, action.label(), active);
+            draw_button(fb, rect, action.label(), active, Font::Bitmap);
         }
         if !self.status.is_empty() {
             // Bottom edge: the only strip of the calendar screen that is
             // neither a toolbar button nor useful writing space.
-            fb.draw_text(4, CANVAS_H - 12, &self.status, GRAY, 2);
+            fb.draw_text(4, CANVAS_H - 12, &self.status, GRAY, 2, Font::Bitmap);
         }
 
         let today = self.today();
         let cells = self.grid_cells();
-        if self.state.config.view_mode == ViewMode::Month {
-            draw_vertical_text(
-                fb,
-                8,
-                TOOLBAR_H + (CANVAS_H - TOOLBAR_H) / 2,
-                &self.state.config.anchor_date.format("%B").to_string(),
-                MONTH_LABEL_SCALE,
-            );
+        match self.state.config.view_mode {
+            ViewMode::Month => {
+                draw_vertical_text(
+                    fb,
+                    8,
+                    TOOLBAR_H + (CANVAS_H - TOOLBAR_H) / 2,
+                    &self.state.config.anchor_date.format("%B").to_string(),
+                    MONTH_LABEL_SCALE,
+                );
+            }
+            ViewMode::TwoMonths => {
+                // One vertical label per month, centred on that month's rows.
+                let anchor = self.state.config.anchor_date;
+                let first = anchor.with_day(1).unwrap();
+                let second = next_month_first(anchor);
+                for month in [first, second] {
+                    if let Some(center_y) = month_center_y(&cells, month.year(), month.month()) {
+                        draw_vertical_text(
+                            fb,
+                            8,
+                            center_y,
+                            &month.format("%B").to_string(),
+                            MONTH_LABEL_SCALE,
+                        );
+                    }
+                }
+            }
+            _ => {}
         }
+        let month_like = matches!(
+            self.state.config.view_mode,
+            ViewMode::Month | ViewMode::TwoMonths
+        );
         for (index, cell) in cells.iter().enumerate() {
             fb.draw_rect_outline(cell.rect, GRAY);
             if cell.date == today {
@@ -1049,17 +1103,32 @@ impl App {
                 &day_label,
                 label_gray,
                 DAY_NUMBER_SCALE,
+                Font::Bitmap,
             );
 
             // Event summaries, one line each, below the day number.
-            let mut text_y = cell.rect.y + 8 + 5 * DAY_NUMBER_SCALE;
+            let line_h = FrameBuffer::text_height(EVENT_TEXT_SCALE, Font::Bitmap);
+            let mut text_y =
+                cell.rect.y + 6 + FrameBuffer::text_height(DAY_NUMBER_SCALE, Font::Bitmap);
             for event in self.events_for(cell.date) {
-                if text_y + 12 > cell.rect.y + cell.rect.h {
+                if text_y + line_h > cell.rect.y + cell.rect.h {
                     break;
                 }
-                let summary = fit_text(&event.summary, cell.rect.w - 8, EVENT_TEXT_SCALE);
-                fb.draw_text(cell.rect.x + 4, text_y, &summary, BLACK, EVENT_TEXT_SCALE);
-                text_y += 12;
+                let summary = fit_text(
+                    &event.summary,
+                    cell.rect.w - 8,
+                    EVENT_TEXT_SCALE,
+                    Font::Bitmap,
+                );
+                fb.draw_text(
+                    cell.rect.x + 4,
+                    text_y,
+                    &summary,
+                    BLACK,
+                    EVENT_TEXT_SCALE,
+                    Font::Bitmap,
+                );
+                text_y += line_h;
             }
 
             // Handwritten ink, denormalized back into this cell's rect —
@@ -1075,7 +1144,7 @@ impl App {
                     prev = Some((px, py));
                 }
             }
-            if self.state.config.view_mode == ViewMode::Month {
+            if month_like {
                 draw_month_boundaries(fb, &cells, index);
             }
         }
@@ -1379,19 +1448,19 @@ impl App {
     fn render_settings(&self, fb: &mut FrameBuffer) {
         fb.clear(WHITE);
         let layout = self.settings_layout();
-        draw_button(fb, layout.back_button, "BACK", false);
-        draw_button(fb, layout.refresh_button, "REFRESH", false);
+        draw_button(fb, layout.back_button, "BACK", false, Font::Ui);
+        draw_button(fb, layout.refresh_button, "REFRESH", false, Font::Ui);
 
         let offset_text = if let Some(field) = &self.offset_editor {
             format!(
-                "UTC OFFSET MINUTES: {}",
+                "UTC offset minutes: {}",
                 text_with_cursor(&field.text, field.cursor)
             )
         } else {
             let label =
                 calnotes_core::timeutil::UtcOffset::new(self.state.config.utc_offset_minutes)
                     .label();
-            format!("UTC OFFSET: {label} (TAP TO EDIT)")
+            format!("UTC offset: {label} (tap to edit)")
         };
         fb.draw_rect_outline(
             layout.offset_row,
@@ -1404,16 +1473,22 @@ impl App {
         fb.draw_text(
             layout.offset_row.x + 12,
             layout.offset_row.y + 32,
-            &fit_text(&offset_text, layout.offset_row.w - 24, BODY_TEXT_SCALE),
+            &fit_text(
+                &offset_text,
+                layout.offset_row.w - 24,
+                BODY_TEXT_SCALE,
+                Font::Ui,
+            ),
             BLACK,
             BODY_TEXT_SCALE,
+            Font::Ui,
         );
         if let Some(save) = layout.offset_save_button {
-            draw_button(fb, save, "SAVE", false);
+            draw_button(fb, save, "SAVE", false, Font::Ui);
         }
 
         if self.editor.is_none() {
-            fb.draw_text(20, 222, "SOURCES", BLACK, BODY_TEXT_SCALE);
+            fb.draw_text(20, 222, "Sources", BLACK, BODY_TEXT_SCALE, Font::Ui);
         }
 
         for row in &layout.source_rows {
@@ -1423,6 +1498,7 @@ impl App {
                 &format!("{} {}", source.label, status),
                 row.edit.w - 12,
                 BODY_TEXT_SCALE,
+                Font::Ui,
             );
             fb.draw_rect_outline(row.edit, BLACK);
             fb.draw_text(
@@ -1431,6 +1507,7 @@ impl App {
                 &label,
                 BLACK,
                 BODY_TEXT_SCALE,
+                Font::Ui,
             );
             if let Some(login) = row.login {
                 let logged_in = matches!(
@@ -1445,50 +1522,60 @@ impl App {
                     login,
                     if logged_in { "RE-LOG IN" } else { "LOG IN" },
                     logged_in,
+                    Font::Ui,
                 );
             }
-            draw_button(fb, row.test, "TEST", false);
+            draw_button(fb, row.test, "TEST", false, Font::Ui);
             draw_button(
                 fb,
                 row.toggle,
                 if source.enabled { "ON" } else { "OFF" },
                 source.enabled,
+                Font::Ui,
             );
-            draw_button(fb, row.delete, "DEL", false);
+            draw_button(fb, row.delete, "DEL", false, Font::Ui);
         }
 
         for (kind, rect) in &layout.add_buttons {
-            draw_button(fb, *rect, add_button_label(*kind), false);
+            draw_button(fb, *rect, add_button_label(*kind), false, Font::Ui);
         }
 
         if let Some(login) = &self.google_login {
             let base_y = CANVAS_H - 150;
             for (i, line) in google_login_lines(login).iter().enumerate() {
-                let line = fit_text(line, CANVAS_W - 40, BODY_TEXT_SCALE);
-                fb.draw_text(20, base_y + i as i32 * 24, &line, BLACK, BODY_TEXT_SCALE);
+                let line = fit_text(line, CANVAS_W - 40, BODY_TEXT_SCALE, Font::Ui);
+                fb.draw_text(
+                    20,
+                    base_y + i as i32 * 24,
+                    &line,
+                    BLACK,
+                    BODY_TEXT_SCALE,
+                    Font::Ui,
+                );
             }
         }
         if !self.status.is_empty() {
-            let status = fit_text(&self.status, CANVAS_W - 40, BODY_TEXT_SCALE);
-            fb.draw_text(20, CANVAS_H - 28, &status, BLACK, BODY_TEXT_SCALE);
+            let status = fit_text(&self.status, CANVAS_W - 40, BODY_TEXT_SCALE, Font::Ui);
+            fb.draw_text(20, CANVAS_H - 28, &status, BLACK, BODY_TEXT_SCALE, Font::Ui);
         }
 
         if let Some(editor) = &self.editor {
             fb.draw_text(
                 20,
                 224,
-                "EDIT SOURCE - TAP A FIELD, THEN USE APPLOAD KEYBOARD",
+                "Edit source - tap a field, then use the AppLoad keyboard",
                 BLACK,
                 BODY_TEXT_SCALE,
+                Font::Ui,
             );
             for (field, rect) in &layout.editor_fields {
                 editor.render_field(fb, *field, *rect);
             }
             if let Some(save) = layout.save_button {
-                draw_button(fb, save, "SAVE", false);
+                draw_button(fb, save, "SAVE", false, Font::Ui);
             }
             if let Some(cancel) = layout.cancel_button {
-                draw_button(fb, cancel, "CANCEL", false);
+                draw_button(fb, cancel, "CANCEL", false, Font::Ui);
             }
         }
     }
@@ -1532,7 +1619,7 @@ fn add_button_label(kind: SourceKindChoice) -> &'static str {
     }
 }
 
-fn draw_button(fb: &mut FrameBuffer, rect: view::Rect, label: &str, active: bool) {
+fn draw_button(fb: &mut FrameBuffer, rect: view::Rect, label: &str, active: bool, font: Font) {
     fb.draw_rect_outline(rect, BLACK);
     if active {
         fb.fill_rect(
@@ -1545,23 +1632,33 @@ fn draw_button(fb: &mut FrameBuffer, rect: view::Rect, label: &str, active: bool
             GRAY,
         );
     }
-    let scale = (rect.w / (label.chars().count().max(1) as i32 * 4)).clamp(2, UI_TEXT_SCALE);
-    let tx = rect.x + ((rect.w - FrameBuffer::text_width(label, scale)) / 2).max(2);
-    let ty = rect.y + (rect.h - 5 * scale) / 2;
-    fb.draw_text(tx, ty, label, BLACK, scale);
+    // Pick the largest size (up to UI_TEXT_SCALE) whose measured width fits
+    // the button, so labels never overflow or clip in either font.
+    let scale = (2..=UI_TEXT_SCALE)
+        .rev()
+        .find(|s| FrameBuffer::text_width(label, *s, font) <= rect.w - 8)
+        .unwrap_or(2);
+    let tx = rect.x + ((rect.w - FrameBuffer::text_width(label, scale, font)) / 2).max(2);
+    let ty = rect.y + (rect.h - FrameBuffer::text_height(scale, font)) / 2;
+    fb.draw_text(tx, ty, label, BLACK, scale, font);
 }
 
-fn fit_text(text: &str, max_width: i32, scale: i32) -> String {
-    let max_chars = (max_width / (4 * scale)).max(0) as usize;
-    if text.chars().count() <= max_chars {
+/// Truncate `text` (with an ellipsis) to whatever fits in `max_width`
+/// pixels at `scale` in `font`.
+fn fit_text(text: &str, max_width: i32, scale: i32, font: Font) -> String {
+    if FrameBuffer::text_width(text, scale, font) <= max_width {
         return text.to_string();
     }
-    if max_chars <= 3 {
-        return text.chars().take(max_chars).collect();
+    let chars: Vec<char> = text.chars().collect();
+    let mut end = chars.len();
+    while end > 0 {
+        let candidate: String = chars[..end].iter().collect::<String>() + "...";
+        if FrameBuffer::text_width(&candidate, scale, font) <= max_width {
+            return candidate;
+        }
+        end -= 1;
     }
-    let mut result: String = text.chars().take(max_chars - 3).collect();
-    result.push_str("...");
-    result
+    String::new()
 }
 
 fn text_with_cursor(text: &str, cursor: usize) -> String {
@@ -1578,13 +1675,59 @@ fn text_with_cursor(text: &str, cursor: usize) -> String {
     result
 }
 
+/// Normalize a user-entered calendar URL: trim surrounding whitespace and,
+/// if no scheme was typed, assume HTTPS. A URL that already carries an
+/// http(s) scheme is left as typed (a plain `http://` URL is still refused
+/// at fetch time). This is why an address pasted with a stray leading space
+/// — or entered without the scheme — no longer trips the "non-HTTPS" guard.
+fn normalize_https_url(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("https://") || lower.starts_with("http://") {
+        trimmed.to_string()
+    } else {
+        format!("https://{trimmed}")
+    }
+}
+
+/// The month-name label down the calendar's left gutter — always the crisp
+/// bitmap font, as it is calendar chrome.
 fn draw_vertical_text(fb: &mut FrameBuffer, x: i32, center_y: i32, text: &str, scale: i32) {
-    let height = text.chars().count() as i32 * 7 * scale;
+    let line = FrameBuffer::text_height(scale, Font::Bitmap);
+    let height = text.chars().count() as i32 * line;
     let mut y = center_y - height / 2;
     for character in text.chars() {
-        fb.draw_text(x, y, &character.to_string(), BLACK, scale);
-        y += 7 * scale;
+        fb.draw_text(x, y, &character.to_string(), BLACK, scale, Font::Bitmap);
+        y += line;
     }
+}
+
+/// First day of the month after `date`'s month.
+fn next_month_first(date: NaiveDate) -> NaiveDate {
+    let (year, month) = if date.month() == 12 {
+        (date.year() + 1, 1)
+    } else {
+        (date.year(), date.month() + 1)
+    };
+    NaiveDate::from_ymd_opt(year, month, 1).unwrap()
+}
+
+/// Vertical centre (canvas y) of the cells belonging to `year`/`month`, used
+/// to place that month's label in the two-month view.
+fn month_center_y(cells: &[view::DateCell], year: i32, month: u32) -> Option<i32> {
+    let mut top = i32::MAX;
+    let mut bottom = i32::MIN;
+    for cell in cells
+        .iter()
+        .filter(|c| c.date.year() == year && c.date.month() == month)
+    {
+        top = top.min(cell.rect.y);
+        bottom = bottom.max(cell.rect.y + cell.rect.h);
+    }
+    (top != i32::MAX).then_some((top + bottom) / 2)
 }
 
 fn draw_month_boundaries(fb: &mut FrameBuffer, cells: &[view::DateCell], index: usize) {
@@ -1814,10 +1957,10 @@ impl SourceEditor {
     pub fn build_source(&self, id: String) -> CalendarSource {
         let kind = match self.kind_being_created {
             SourceKindChoice::LocalIcs => SourceKind::LocalIcs {
-                path: self.path.text.clone(),
+                path: self.path.text.trim().to_string(),
             },
             SourceKindChoice::HttpsIcs => SourceKind::HttpsIcs {
-                url: self.url.text.clone(),
+                url: normalize_https_url(&self.url.text),
             },
             SourceKindChoice::Google => SourceKind::GoogleCalendar {
                 client_id: self.client_id.text.clone(),
@@ -1826,9 +1969,9 @@ impl SourceEditor {
                 refresh_token: self.existing_refresh_token.clone(),
             },
             SourceKindChoice::Icloud => SourceKind::IcloudCalDav {
-                apple_id: self.apple_id.text.clone(),
+                apple_id: self.apple_id.text.trim().to_string(),
                 app_specific_password: self.app_specific_password.text.clone(),
-                calendar_url: self.calendar_url.text.clone(),
+                calendar_url: normalize_https_url(&self.calendar_url.text),
             },
         };
         CalendarSource {
@@ -1842,19 +1985,19 @@ impl SourceEditor {
 
     fn render_field(&self, fb: &mut FrameBuffer, field: EditorField, rect: view::Rect) {
         let (name, value, secret) = match field {
-            EditorField::Label => ("LABEL", &self.label, false),
-            EditorField::Path => ("ICS FILE PATH", &self.path, false),
+            EditorField::Label => ("Label", &self.label, false),
+            EditorField::Path => ("ICS file path", &self.path, false),
             EditorField::Url => ("ICS URL", &self.url, false),
-            EditorField::ClientId => ("GOOGLE CLIENT ID", &self.client_id, false),
-            EditorField::ClientSecret => ("GOOGLE CLIENT SECRET", &self.client_secret, true),
-            EditorField::CalendarId => ("GOOGLE CALENDAR ID", &self.calendar_id, false),
-            EditorField::AppleId => ("APPLE ID", &self.apple_id, false),
+            EditorField::ClientId => ("Google client ID", &self.client_id, false),
+            EditorField::ClientSecret => ("Google client secret", &self.client_secret, true),
+            EditorField::CalendarId => ("Google calendar ID", &self.calendar_id, false),
+            EditorField::AppleId => ("Apple ID", &self.apple_id, false),
             EditorField::AppSpecificPassword => (
-                "ICLOUD APP-SPECIFIC PASSWORD",
+                "iCloud app-specific password",
                 &self.app_specific_password,
                 true,
             ),
-            EditorField::CalendarUrl => ("ICLOUD CALENDAR URL", &self.calendar_url, false),
+            EditorField::CalendarUrl => ("iCloud calendar URL", &self.calendar_url, false),
         };
         let focused = self.focus == field;
         fb.draw_rect_outline(rect, if focused { BLACK } else { GRAY });
@@ -1869,7 +2012,14 @@ impl SourceEditor {
                 BLACK,
             );
         }
-        fb.draw_text(rect.x + 12, rect.y + 12, name, BLACK, BODY_TEXT_SCALE);
+        fb.draw_text(
+            rect.x + 12,
+            rect.y + 12,
+            name,
+            BLACK,
+            BODY_TEXT_SCALE,
+            Font::Ui,
+        );
         let raw = if secret {
             calnotes_core::config::mask_secret(&value.text)
         } else {
@@ -1883,9 +2033,10 @@ impl SourceEditor {
         fb.draw_text(
             rect.x + 12,
             rect.y + 62,
-            &fit_text(&shown, rect.w - 24, BODY_TEXT_SCALE),
+            &fit_text(&shown, rect.w - 24, BODY_TEXT_SCALE, Font::Ui),
             BLACK,
             BODY_TEXT_SCALE,
+            Font::Ui,
         );
     }
 }
@@ -2553,6 +2704,40 @@ mod tests {
             calnotes_core::model::AppConfig::default().view_mode,
             ViewMode::Month
         );
+    }
+
+    #[test]
+    fn normalize_https_url_trims_and_defaults_to_https() {
+        // A pasted URL with a stray space still validates.
+        assert_eq!(
+            normalize_https_url("  https://a.com/c.ics "),
+            "https://a.com/c.ics"
+        );
+        // A scheme-less address gets HTTPS (the common case that used to be
+        // rejected).
+        assert_eq!(
+            normalize_https_url("www.officeholidays.com/ics/netherlands"),
+            "https://www.officeholidays.com/ics/netherlands"
+        );
+        // An explicit http:// URL is preserved (and refused later at fetch).
+        assert_eq!(normalize_https_url("http://a.com"), "http://a.com");
+        assert_eq!(normalize_https_url("   "), "");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn https_source_editor_normalizes_the_url_on_save() {
+        with_temp_data_dir(|| {
+            let mut editor = SourceEditor::new_for_add(SourceKindChoice::HttpsIcs);
+            editor.url = TextField::new(" www.officeholidays.com/ics/netherlands ");
+            let source = editor.build_source("src-1".to_string());
+            match source.kind {
+                SourceKind::HttpsIcs { url } => {
+                    assert_eq!(url, "https://www.officeholidays.com/ics/netherlands");
+                }
+                other => panic!("unexpected kind: {other:?}"),
+            }
+        });
     }
 
     #[test]

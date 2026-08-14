@@ -40,6 +40,22 @@ see `docs/SECURITY.md`). Many calendar providers (including Google and
 iCloud) can also publish a plain "secret address" `.ics` URL if you don't
 want to use their dedicated integration below.
 
+**Example — a public holidays calendar:**
+
+1. Tap **SET**, then **+ HTTPS ICS**.
+2. Tap the **Label** field and type a name, e.g. `NL Holidays`.
+3. Tap the **ICS URL** field and type the address, e.g.
+   `https://www.officeholidays.com/ics/netherlands`. The scheme is
+   optional — if you leave it off, HTTPS is assumed — and any surrounding
+   spaces are ignored, so `www.officeholidays.com/ics/netherlands` works
+   too. (The `@`, `.`, `/`, `:` and `_` characters all type and display
+   correctly in the settings font.)
+4. Tap **SAVE**, then **TEST** on that source's row. It makes a real
+   fetch and updates the row with `OK … EVENTS` or the exact error. TEST
+   runs in the background, so the screen stays responsive; if the network
+   is slow it can take a few seconds before the result appears.
+5. Make sure the row shows **ON**, then tap **BACK**.
+
 ### Google Calendar
 
 Uses OAuth 2.0's **device authorization grant** (RFC 8628) — no password

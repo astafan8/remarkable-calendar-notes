@@ -55,7 +55,8 @@ pub fn fetch_icloud_events(
     window: Window,
     offset: UtcOffset,
 ) -> Result<Vec<Event>, SourceError> {
-    if !calendar_url.starts_with("https://") {
+    let calendar_url = calendar_url.trim();
+    if !calendar_url.to_ascii_lowercase().starts_with("https://") {
         return Err(SourceError::Http(format!(
             "refusing non-HTTPS CalDAV URL: {calendar_url}"
         )));

@@ -1,11 +1,16 @@
 <#
 .SYNOPSIS
 Install an official Calendar Notes ZIP using one SSH password prompt.
+.DESCRIPTION
+Works with either the all-in-one remarkable-calendar-notes-<ver>.zip or the
+app-only -armv7.zip. The app is always installed; the optional xochitl
+sidebar launcher is installed only with -Sidebar.
 #>
 param(
     [Parameter(Mandatory = $true)]
     [string]$Bundle,
-    [string]$Device = "10.11.99.1"
+    [string]$Device = "10.11.99.1",
+    [switch]$Sidebar
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,60 +22,68 @@ if (-not (Get-Command ssh -ErrorAction SilentlyContinue)) {
     throw "ssh is required. Install Windows OpenSSH Client in Settings > Optional Features."
 }
 
+$wantSidebar = if ($Sidebar) { "1" } else { "0" }
 $encoded = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Resolve-Path $Bundle)))
-$remoteInstall = (@'
+$remoteInstall = (@"
+want_sidebar=$wantSidebar
 set -eu
 archive=/tmp/remarkable-calendar-notes-install.zip
 stage=/tmp/remarkable-calendar-notes-install
-rm -rf "$stage"
-mkdir -p "$stage"
-base64 -d >"$archive"
-unzip -oq "$archive" -d "$stage"
-app="$(find "$stage" -type f -name external.manifest.json -path '*/remarkable-calendar-notes/*' | head -n 1)"
-[ -n "$app" ] || { echo "Calendar Notes app not found in bundle" >&2; exit 1; }
-app_dir="$(dirname "$app")"
+rm -rf "`$stage"
+mkdir -p "`$stage"
+base64 -d >"`$archive"
+unzip -oq "`$archive" -d "`$stage"
+app="`$(find "`$stage" -type f -name external.manifest.json -path '*/remarkable-calendar-notes/*' | head -n 1)"
+[ -n "`$app" ] || { echo "Calendar Notes app not found in bundle" >&2; exit 1; }
+app_dir="`$(dirname "`$app")"
 destination=/home/root/xovi/exthome/appload/remarkable-calendar-notes
-incoming=/home/root/xovi/exthome/appload/.remarkable-calendar-notes.new.$$
+incoming=/home/root/xovi/exthome/appload/.remarkable-calendar-notes.new.`$`$
 backup=/home/root/xovi/exthome/appload/.remarkable-calendar-notes.previous
 restore_previous() {
-    if [ ! -d "$destination" ] && [ -d "$backup" ]; then
-        mv "$backup" "$destination"
+    if [ ! -d "`$destination" ] && [ -d "`$backup" ]; then
+        mv "`$backup" "`$destination"
     fi
 }
 trap restore_previous EXIT HUP INT TERM
 restore_previous
-rm -rf "$incoming"
-cp -a "$app_dir" "$incoming"
-chmod 755 "$incoming/remarkable-calendar-notes"
-"$incoming/remarkable-calendar-notes" --help >/dev/null 2>&1
-rm -rf "$backup"
-if [ -d "$destination" ]; then
-    mv "$destination" "$backup"
+rm -rf "`$incoming"
+cp -a "`$app_dir" "`$incoming"
+chmod 755 "`$incoming/remarkable-calendar-notes"
+"`$incoming/remarkable-calendar-notes" --help >/dev/null 2>&1
+rm -rf "`$backup"
+if [ -d "`$destination" ]; then
+    mv "`$destination" "`$backup"
 fi
-if mv "$incoming" "$destination"; then
-    rm -rf "$backup"
+if mv "`$incoming" "`$destination"; then
+    rm -rf "`$backup"
 else
-    [ ! -d "$backup" ] || mv "$backup" "$destination"
+    [ ! -d "`$backup" ] || mv "`$backup" "`$destination"
     exit 1
 fi
-qmd="$(find "$stage" -type f -name 'calendarNotesSidebar.qmd' | head -n 1)"
-rcc="$(find "$stage" -type f -name 'calendarNotesSidebar.rcc' | head -n 1)"
-if [ -n "$qmd" ]; then
-    install -m 644 "$qmd" /home/root/xovi/exthome/qt-resource-rebuilder/calendarNotesSidebar.qmd
+if [ "`$want_sidebar" = "1" ]; then
+    qmd="`$(find "`$stage" -type f -name 'calendarNotesSidebar.qmd' | head -n 1)"
+    rcc="`$(find "`$stage" -type f -name 'calendarNotesSidebar.rcc' | head -n 1)"
+    if [ -n "`$qmd" ]; then
+        install -m 644 "`$qmd" /home/root/xovi/exthome/qt-resource-rebuilder/calendarNotesSidebar.qmd
+    fi
+    if [ -n "`$rcc" ]; then
+        install -m 644 "`$rcc" /home/root/xovi/exthome/qt-resource-rebuilder/calendarNotesSidebar.rcc
+    fi
+    if [ -n "`$qmd" ]; then
+        xovi/rebuild_hashtable
+        echo "Sidebar launcher installed; restart XOVI/xochitl to see the icon."
+    else
+        echo "warning: -Sidebar requested but the bundle has no sidebar files." >&2
+    fi
 fi
-if [ -n "$rcc" ]; then
-    install -m 644 "$rcc" /home/root/xovi/exthome/qt-resource-rebuilder/calendarNotesSidebar.rcc
-fi
-rm -rf "$stage" "$archive"
+rm -rf "`$stage" "`$archive"
 rm -f /home/root/.local/share/remarkable-calendar-notes/process-started.txt
-if [ -n "$qmd" ]; then
-    xovi/rebuild_hashtable
-fi
 echo "Calendar Notes installed; executable permissions verified."
-'@) -replace "`r`n", "`n"
+"@) -replace "`r`n", "`n"
 
 Write-Host "Connecting to root@$Device (one SSH password prompt)..."
 $encoded | & ssh -o ConnectTimeout=10 "root@$Device" $remoteInstall
 if ($LASTEXITCODE -ne 0) {
     throw "Installation failed."
 }
+
