@@ -1,7 +1,7 @@
 maintainer="astafan8 <astafan8@users.noreply.github.com>"
 status="experimental"
 pkgname=remarkable-calendar-notes-sidebar
-pkgver=0.1.13
+pkgver=0.1.14
 pkgrel=0
 upstream_author="astafan8"
 category="ui"
@@ -12,16 +12,20 @@ license="GPL-3.0-only"
 depends="remarkable-calendar-notes qt-resource-rebuilder appload>=0.5.3 remarkable-os>=3.27 remarkable-os<3.28 !rm1 !rmpp !rmppm !rmppure"
 readmeurl="https://raw.githubusercontent.com/$upstream_author/remarkable-calendar-notes/v$pkgver/sidebar/README.md"
 source="
-https://raw.githubusercontent.com/$upstream_author/remarkable-calendar-notes/v$pkgver/sidebar/3.27/calendarNotesSidebar.qmd
-https://github.com/$upstream_author/remarkable-calendar-notes/releases/download/v$pkgver/calendarNotesSidebar-3.27.rcc
+https://github.com/$upstream_author/remarkable-calendar-notes/releases/download/v$pkgver/remarkable-calendar-notes-$pkgver.zip
 https://raw.githubusercontent.com/asivery/rm-appload/v0.5.3/LICENSE
 "
 options='strip tracedeps'
 
+unpack() {
+	unzip -o "$srcdir"/remarkable-calendar-notes-$pkgver.zip -d "$srcdir"
+}
+
 package() {
-	install -Dm644 "$srcdir"/calendarNotesSidebar.qmd \
+	base="$srcdir"/remarkable-calendar-notes-$pkgver/sidebar
+	install -Dm644 "$base"/calendarNotesSidebar.qmd \
 		"$pkgdir"/home/root/xovi/exthome/qt-resource-rebuilder/calendarNotesSidebar.qmd
-	install -Dm644 "$srcdir"/calendarNotesSidebar-3.27.rcc \
+	install -Dm644 "$base"/calendarNotesSidebar.rcc \
 		"$pkgdir"/home/root/xovi/exthome/qt-resource-rebuilder/calendarNotesSidebar.rcc
 
 	install -Dm644 "$srcdir"/LICENSE \
@@ -30,8 +34,9 @@ package() {
 		"$pkgdir"/home/root/.vellum/licenses/$pkgname/SOURCES
 }
 
+# Placeholders until v0.1.14 is published; fill via
+# scripts/update-vellum-checksums.sh (the only supported way).
 sha512sums="
-a833263eb808434a7031b8a52935a31f379dede42f960cdfaa401964ba2f537001ed828798f2e8ef914e05f12de8d14f4fc8b17e404e2a7fe0762a78e077a542  calendarNotesSidebar.qmd
-2e34a93128a8196e77ca8e0c21452c7f651860ba166c4798152a643451b9b81f932061c8cb8f8f0586ac88d7f72300185ac971bd59208065b5e41a6eea701546  calendarNotesSidebar-3.27.rcc
-d361e5e8201481c6346ee6a886592c51265112be550d5224f1a7a6e116255c2f1ab8788df579d9b8372ed7bfd19bac4b6e70e00b472642966ab5b319b99a2686  LICENSE
+PLACEHOLDER-ALLINONE-ZIP  remarkable-calendar-notes-0.1.14.zip
+PLACEHOLDER-LICENSE  LICENSE
 "

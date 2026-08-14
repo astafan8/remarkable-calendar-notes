@@ -1,7 +1,7 @@
 maintainer="astafan8 <astafan8@users.noreply.github.com>"
 status="experimental"
 pkgname=remarkable-calendar-notes
-pkgver=0.1.13
+pkgver=0.1.14
 pkgrel=0
 upstream_author="astafan8"
 category="apps"
@@ -17,21 +17,22 @@ license="MIT"
 depends="appload>=0.5.3 remarkable-os>=3.26 remarkable-os<3.28 !rm1 !rmpp !rmppm !rmppure"
 readmeurl="https://raw.githubusercontent.com/$upstream_author/remarkable-calendar-notes/v$pkgver/README.md"
 source="
-https://github.com/$upstream_author/remarkable-calendar-notes/releases/download/v$pkgver/remarkable-calendar-notes-$pkgver-armv7.zip
+https://github.com/$upstream_author/remarkable-calendar-notes/releases/download/v$pkgver/remarkable-calendar-notes-$pkgver.zip
 https://raw.githubusercontent.com/$upstream_author/remarkable-calendar-notes/v$pkgver/LICENSE
 "
 options="!check !fhs"
 
 unpack() {
-	unzip -o "$srcdir"/remarkable-calendar-notes-$pkgver-armv7.zip -d "$srcdir"
+	unzip -o "$srcdir"/remarkable-calendar-notes-$pkgver.zip -d "$srcdir"
 }
 
 package() {
-	install -Dm755 "$srcdir"/remarkable-calendar-notes/remarkable-calendar-notes \
+	base="$srcdir"/remarkable-calendar-notes-$pkgver/remarkable-calendar-notes
+	install -Dm755 "$base"/remarkable-calendar-notes \
 		"$pkgdir"/home/root/xovi/exthome/appload/remarkable-calendar-notes/remarkable-calendar-notes
-	install -Dm644 "$srcdir"/remarkable-calendar-notes/icon.png \
+	install -Dm644 "$base"/icon.png \
 		"$pkgdir"/home/root/xovi/exthome/appload/remarkable-calendar-notes/icon.png
-	install -Dm644 "$srcdir"/remarkable-calendar-notes/external.manifest.json \
+	install -Dm644 "$base"/external.manifest.json \
 		"$pkgdir"/home/root/xovi/exthome/appload/remarkable-calendar-notes/external.manifest.json
 
 	install -Dm644 "$srcdir"/LICENSE \
@@ -49,8 +50,9 @@ predeinstall() {
 	fi
 }
 
-# Checksums recorded from the published v0.1.13 release.
+# Placeholders until v0.1.14 is published; fill via
+# scripts/update-vellum-checksums.sh (the only supported way).
 sha512sums="
-c1c3a3537fc92e3a1166428573d2892451e1167d967f8510360db803b72cd2d3ddf71cae646fbb8314754afe42b324abc1ac0e83c48d79d2a55d3e7640177879  remarkable-calendar-notes-0.1.13-armv7.zip
-9f39ea5e24a0eaf3f0e3217170cded95184fe8a6f179d4d19c4c11c110e5be135be23d7edb0b3cec093d1a4ea93ffec753f4b8fcf9b0ac1fc5856f7a95f13773  LICENSE
+PLACEHOLDER-ALLINONE-ZIP  remarkable-calendar-notes-0.1.14.zip
+PLACEHOLDER-LICENSE  LICENSE
 "

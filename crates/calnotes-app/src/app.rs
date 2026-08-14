@@ -217,6 +217,13 @@ pub struct App {
     /// Short, user-visible status line (refresh progress, login progress).
     pub status: String,
     refresh_rx: Option<Receiver<RefreshOutcome>>,
+    /// A one-shot worker running an in-editor source TEST (built from the
+    /// unsaved editor fields). `Some` while the test is in flight.
+    editor_test_rx: Option<Receiver<CalendarSource>>,
+    /// Full, multi-line result text of the most recent in-editor TEST,
+    /// shown wrapped under the editor's TEST button so long error messages
+    /// are fully readable. Cleared whenever the editor opens or closes.
+    editor_test_result: Option<String>,
     pub google_login: Option<GoogleLogin>,
     /// Dates edited (drawn/erased/lasso'd/cleared) in order, so Undo can
     /// reverse the user's actual last action regardless of which cell it
@@ -254,6 +261,8 @@ impl App {
             next_source_seq: 0,
             status: String::new(),
             refresh_rx: None,
+            editor_test_rx: None,
+            editor_test_result: None,
             google_login: None,
             edit_history: Vec::new(),
         })
@@ -362,6 +371,33 @@ impl App {
         self.status = format!("TESTING {}...", label.to_uppercase());
     }
 
+    /// Test the source currently described by the open editor — using its
+    /// unsaved field values — on a worker thread. The full result (or full
+    /// error message) is stored in `editor_test_result` and shown wrapped
+    /// under the editor's TEST button, so the user can read the entire
+    /// message rather than a truncated status line.
+    fn start_editor_test(&mut self) {
+        if self.refresh_rx.is_some() || self.editor_test_rx.is_some() {
+            self.editor_test_result = Some("Please wait for the current test to finish.".into());
+            return;
+        }
+        let Some(editor) = &self.editor else {
+            return;
+        };
+        let source = editor.build_source("__editor_test__".to_string());
+        let window = self.fetch_window();
+        let offset = self.offset();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut source = source;
+            let _ = sources::refresh_source(&mut source, window, offset);
+            let _ = tx.send(source);
+        });
+        self.editor_test_rx = Some(rx);
+        self.editor_test_result = Some("Testing…".to_string());
+        self.status = "TESTING SOURCE...".to_string();
+    }
+
     /// Refresh synchronously. Only used by the desktop `preview` command
     /// and tests — the device event loop always uses [`App::start_refresh`]
     /// so the UI never blocks on the network.
@@ -444,6 +480,22 @@ impl App {
                 Err(TryRecvError::Disconnected) => {
                     self.refresh_rx = None;
                     self.status = "REFRESH FAILED".to_string();
+                    changed = true;
+                }
+            }
+        }
+        if let Some(rx) = &self.editor_test_rx {
+            match rx.try_recv() {
+                Ok(source) => {
+                    self.editor_test_rx = None;
+                    self.editor_test_result = Some(full_status_text(&source.last_status));
+                    self.status = String::new();
+                    changed = true;
+                }
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => {
+                    self.editor_test_rx = None;
+                    self.editor_test_result = Some("Test failed to run.".to_string());
                     changed = true;
                 }
             }
@@ -807,6 +859,79 @@ impl App {
         editor.focus = EditorField::CalendarUrl;
         self.editor = Some(editor);
     }
+
+    /// Desktop-preview helper: drop a few sample handwritten notes onto days
+    /// of the current month so a screenshot shows what the ink looks like.
+    /// Not used on device.
+    pub fn add_demo_scribbles(&mut self) {
+        use calnotes_core::ink::NormPoint;
+        use std::f32::consts::PI;
+        let (year, month) = (self.today().year(), self.today().month());
+        let ink = &mut self.state.ink;
+        let mut stroke = |day: u32, points: &[(f32, f32)]| {
+            if let Some(date) = NaiveDate::from_ymd_opt(year, month, day) {
+                let idx = ink.begin_stroke(date);
+                for &(x, y) in points {
+                    ink.push_point(
+                        date,
+                        idx,
+                        NormPoint {
+                            x,
+                            y,
+                            pressure: 1.0,
+                        },
+                    );
+                }
+            }
+        };
+        // A checkmark.
+        stroke(3, &[(0.20, 0.55), (0.40, 0.80), (0.82, 0.22)]);
+        // A wavy "note" underline.
+        let wave: Vec<(f32, f32)> = (0..=24)
+            .map(|i| {
+                let t = i as f32 / 24.0;
+                (0.12 + 0.76 * t, 0.55 + 0.14 * (t * PI * 3.0).sin())
+            })
+            .collect();
+        stroke(10, &wave);
+        // A five-point star (today).
+        stroke(
+            14,
+            &[
+                (0.50, 0.18),
+                (0.62, 0.55),
+                (0.86, 0.55),
+                (0.66, 0.72),
+                (0.75, 0.86),
+                (0.50, 0.63),
+                (0.25, 0.86),
+                (0.34, 0.72),
+                (0.14, 0.55),
+                (0.38, 0.55),
+                (0.50, 0.18),
+            ],
+        );
+        // A loopy cursive scribble.
+        let loops: Vec<(f32, f32)> = (0..=48)
+            .map(|i| {
+                let t = i as f32 / 48.0;
+                (0.12 + 0.76 * t, 0.5 + 0.26 * (t * PI * 4.0).sin())
+            })
+            .collect();
+        stroke(21, &loops);
+        // A little checkbox with a tick.
+        stroke(
+            26,
+            &[
+                (0.22, 0.35),
+                (0.44, 0.35),
+                (0.44, 0.62),
+                (0.22, 0.62),
+                (0.22, 0.35),
+            ],
+        );
+        stroke(26, &[(0.50, 0.48), (0.60, 0.62), (0.82, 0.30)]);
+    }
     fn perform_action(&mut self, action: Action) {
         match action {
             Action::Settings => {
@@ -1029,7 +1154,7 @@ impl App {
         fb.clear(WHITE);
         for (mode, rect) in self.view_buttons() {
             let active = mode == self.state.config.view_mode;
-            draw_button(fb, rect, mode.label(), active, Font::Bitmap);
+            draw_button(fb, rect, &mode.label().to_uppercase(), active, Font::Ui);
         }
         for (action, rect) in self.action_buttons() {
             let active = matches!(
@@ -1038,12 +1163,12 @@ impl App {
                     | (Action::Erase, InkTool::Erase)
                     | (Action::Lasso, InkTool::Lasso)
             );
-            draw_button(fb, rect, action.label(), active, Font::Bitmap);
+            draw_button(fb, rect, action.label(), active, Font::Ui);
         }
         if !self.status.is_empty() {
             // Bottom edge: the only strip of the calendar screen that is
             // neither a toolbar button nor useful writing space.
-            fb.draw_text(4, CANVAS_H - 12, &self.status, GRAY, 2, Font::Bitmap);
+            fb.draw_text(4, CANVAS_H - 12, &self.status, GRAY, 2, Font::Ui);
         }
 
         let today = self.today();
@@ -1054,7 +1179,13 @@ impl App {
                     fb,
                     8,
                     TOOLBAR_H + (CANVAS_H - TOOLBAR_H) / 2,
-                    &self.state.config.anchor_date.format("%B").to_string(),
+                    &self
+                        .state
+                        .config
+                        .anchor_date
+                        .format("%B")
+                        .to_string()
+                        .to_uppercase(),
                     MONTH_LABEL_SCALE,
                 );
             }
@@ -1069,7 +1200,7 @@ impl App {
                             fb,
                             8,
                             center_y,
-                            &month.format("%B").to_string(),
+                            &month.format("%B").to_string().to_uppercase(),
                             MONTH_LABEL_SCALE,
                         );
                     }
@@ -1103,30 +1234,24 @@ impl App {
                 &day_label,
                 label_gray,
                 DAY_NUMBER_SCALE,
-                Font::Bitmap,
+                Font::Ui,
             );
 
             // Event summaries, one line each, below the day number.
-            let line_h = FrameBuffer::text_height(EVENT_TEXT_SCALE, Font::Bitmap);
-            let mut text_y =
-                cell.rect.y + 6 + FrameBuffer::text_height(DAY_NUMBER_SCALE, Font::Bitmap);
+            let line_h = FrameBuffer::text_height(EVENT_TEXT_SCALE, Font::Ui);
+            let mut text_y = cell.rect.y + 6 + FrameBuffer::text_height(DAY_NUMBER_SCALE, Font::Ui);
             for event in self.events_for(cell.date) {
                 if text_y + line_h > cell.rect.y + cell.rect.h {
                     break;
                 }
-                let summary = fit_text(
-                    &event.summary,
-                    cell.rect.w - 8,
-                    EVENT_TEXT_SCALE,
-                    Font::Bitmap,
-                );
+                let summary = fit_text(&event.summary, cell.rect.w - 8, EVENT_TEXT_SCALE, Font::Ui);
                 fb.draw_text(
                     cell.rect.x + 4,
                     text_y,
                     &summary,
                     BLACK,
                     EVENT_TEXT_SCALE,
-                    Font::Bitmap,
+                    Font::Ui,
                 );
                 text_y += line_h;
             }
@@ -1157,6 +1282,7 @@ impl App {
         if within(layout.back_button, x, y) {
             self.screen = Screen::Calendar;
             self.editor = None;
+            self.editor_test_result = None;
             return;
         }
         if within(layout.refresh_button, x, y) {
@@ -1200,6 +1326,7 @@ impl App {
                 self.editor = Some(SourceEditor::new_for_edit(
                     &self.state.config.sources[row.index],
                 ));
+                self.editor_test_result = None;
                 self.offset_editor = None;
                 return;
             }
@@ -1207,6 +1334,7 @@ impl App {
         for (kind, rect) in &layout.add_buttons {
             if within(*rect, x, y) {
                 self.editor = Some(SourceEditor::new_for_add(*kind));
+                self.editor_test_result = None;
                 self.offset_editor = None;
                 return;
             }
@@ -1218,6 +1346,12 @@ impl App {
                 }
                 self.offset_editor = None;
                 self.status = "USE APPLOAD KEYBOARD BUTTON".to_string();
+                return;
+            }
+        }
+        if let Some(test) = layout.editor_test_button {
+            if within(test, x, y) {
+                self.start_editor_test();
                 return;
             }
         }
@@ -1243,6 +1377,7 @@ impl App {
                     } else {
                         self.state.config.sources.push(source);
                     }
+                    self.editor_test_result = None;
                     let _ = self.state.save_config();
                 }
                 return;
@@ -1251,6 +1386,7 @@ impl App {
         if let Some(cancel) = layout.cancel_button {
             if within(cancel, x, y) {
                 self.editor = None;
+                self.editor_test_result = None;
             }
         }
         if within(layout.offset_row, x, y) {
@@ -1400,37 +1536,46 @@ impl App {
         };
 
         let mut editor_fields = Vec::new();
-        let (save_button, cancel_button) = if let Some(editor) = &self.editor {
-            y = 280;
-            for field in editor.fields_for_kind() {
-                editor_fields.push((
-                    field,
-                    view::Rect {
+        let (save_button, cancel_button, editor_test_button, editor_result_origin) =
+            if let Some(editor) = &self.editor {
+                y = 280;
+                for field in editor.fields_for_kind() {
+                    editor_fields.push((
+                        field,
+                        view::Rect {
+                            x: 20,
+                            y,
+                            w: CANVAS_W - 40,
+                            h: 104,
+                        },
+                    ));
+                    y += 120;
+                }
+                let buttons_y = y;
+                (
+                    Some(view::Rect {
                         x: 20,
-                        y,
-                        w: CANVAS_W - 40,
-                        h: 104,
-                    },
-                ));
-                y += 120;
-            }
-            (
-                Some(view::Rect {
-                    x: 20,
-                    y,
-                    w: 260,
-                    h: 88,
-                }),
-                Some(view::Rect {
-                    x: 300,
-                    y,
-                    w: 260,
-                    h: 88,
-                }),
-            )
-        } else {
-            (None, None)
-        };
+                        y: buttons_y,
+                        w: 260,
+                        h: 88,
+                    }),
+                    Some(view::Rect {
+                        x: 300,
+                        y: buttons_y,
+                        w: 260,
+                        h: 88,
+                    }),
+                    Some(view::Rect {
+                        x: 580,
+                        y: buttons_y,
+                        w: 260,
+                        h: 88,
+                    }),
+                    Some((20, buttons_y + 104)),
+                )
+            } else {
+                (None, None, None, None)
+            };
 
         SettingsLayout {
             back_button,
@@ -1442,6 +1587,8 @@ impl App {
             editor_fields,
             save_button,
             cancel_button,
+            editor_test_button,
+            editor_result_origin,
         }
     }
 
@@ -1577,6 +1724,26 @@ impl App {
             if let Some(cancel) = layout.cancel_button {
                 draw_button(fb, cancel, "CANCEL", false, Font::Ui);
             }
+            if let Some(test) = layout.editor_test_button {
+                draw_button(fb, test, "TEST", false, Font::Ui);
+            }
+            if let (Some(result), Some((rx, ry))) =
+                (&self.editor_test_result, layout.editor_result_origin)
+            {
+                // Full result/error, wrapped over as many lines as needed in
+                // a smaller font so long messages are entirely readable.
+                let line_h = FrameBuffer::text_height(EVENT_TEXT_SCALE, Font::Ui) + 4;
+                for (i, line) in wrap_text(result, CANVAS_W - 40, EVENT_TEXT_SCALE, Font::Ui)
+                    .iter()
+                    .enumerate()
+                {
+                    let y = ry + i as i32 * line_h;
+                    if y + line_h > CANVAS_H {
+                        break;
+                    }
+                    fb.draw_text(rx, y, line, BLACK, EVENT_TEXT_SCALE, Font::Ui);
+                }
+            }
         }
     }
 }
@@ -1608,6 +1775,62 @@ fn status_label(status: &SourceStatus) -> String {
         SourceStatus::Ok { event_count, .. } => format!("OK {event_count} EVENTS"),
         SourceStatus::Error { message, .. } => format!("ERROR: {}", message.to_uppercase()),
     }
+}
+
+/// The full, untruncated result of a source test, for the multi-line
+/// panel under the editor's TEST button. Unlike [`status_label`] this keeps
+/// the original error message verbatim (any case, any length) so the user
+/// can read exactly what went wrong.
+fn full_status_text(status: &SourceStatus) -> String {
+    match status {
+        SourceStatus::NeverSynced => "Not tested yet.".to_string(),
+        SourceStatus::Ok { event_count, .. } => {
+            format!("OK — fetched {event_count} events.")
+        }
+        SourceStatus::Error { message, .. } => format!("Error: {message}"),
+    }
+}
+
+/// Greedily wrap `text` to as many lines as needed so each rendered line
+/// fits within `max_width` pixels at `scale` in `font`. Wraps on spaces
+/// where possible and hard-splits any single word (e.g. a long URL) that
+/// is itself wider than one line.
+fn wrap_text(text: &str, max_width: i32, scale: i32, font: Font) -> Vec<String> {
+    let mut lines = Vec::new();
+    for paragraph in text.split('\n') {
+        let mut current = String::new();
+        for word in paragraph.split(' ') {
+            let candidate = if current.is_empty() {
+                word.to_string()
+            } else {
+                format!("{current} {word}")
+            };
+            if FrameBuffer::text_width(&candidate, scale, font) <= max_width {
+                current = candidate;
+                continue;
+            }
+            if !current.is_empty() {
+                lines.push(std::mem::take(&mut current));
+            }
+            // The word alone may still be wider than a line: split it by
+            // character across as many lines as needed.
+            let mut piece = String::new();
+            for ch in word.chars() {
+                let trial = format!("{piece}{ch}");
+                if FrameBuffer::text_width(&trial, scale, font) <= max_width {
+                    piece = trial;
+                } else {
+                    if !piece.is_empty() {
+                        lines.push(std::mem::take(&mut piece));
+                    }
+                    piece.push(ch);
+                }
+            }
+            current = piece;
+        }
+        lines.push(current);
+    }
+    lines
 }
 
 fn add_button_label(kind: SourceKindChoice) -> &'static str {
@@ -1693,14 +1916,14 @@ fn normalize_https_url(raw: &str) -> String {
     }
 }
 
-/// The month-name label down the calendar's left gutter — always the crisp
-/// bitmap font, as it is calendar chrome.
+/// The month-name label down the calendar's left gutter, in the embedded
+/// JetBrains Mono [`Font::Ui`] to match the rest of the calendar chrome.
 fn draw_vertical_text(fb: &mut FrameBuffer, x: i32, center_y: i32, text: &str, scale: i32) {
-    let line = FrameBuffer::text_height(scale, Font::Bitmap);
+    let line = FrameBuffer::text_height(scale, Font::Ui);
     let height = text.chars().count() as i32 * line;
     let mut y = center_y - height / 2;
     for character in text.chars() {
-        fb.draw_text(x, y, &character.to_string(), BLACK, scale, Font::Bitmap);
+        fb.draw_text(x, y, &character.to_string(), BLACK, scale, Font::Ui);
         y += line;
     }
 }
@@ -1782,6 +2005,9 @@ struct SettingsLayout {
     editor_fields: Vec<(EditorField, view::Rect)>,
     save_button: Option<view::Rect>,
     cancel_button: Option<view::Rect>,
+    editor_test_button: Option<view::Rect>,
+    /// Where the wrapped, multi-line test result is drawn (top-left).
+    editor_result_origin: Option<(i32, i32)>,
 }
 
 /// Which field of the source-under-edit currently has keyboard focus.
@@ -2313,6 +2539,72 @@ mod tests {
         assert_eq!(editor.label.text, "Work");
         assert_eq!(editor.url.text, "https://example.com/work.ics");
         assert_eq!(editor.editing_id, Some("s1".to_string()));
+    }
+
+    #[test]
+    fn wrap_text_splits_long_unbroken_text_across_multiple_lines() {
+        let long = "x".repeat(400);
+        let lines = wrap_text(&long, 600, EVENT_TEXT_SCALE, Font::Ui);
+        assert!(lines.len() > 1, "a 400-char string must wrap");
+        for line in &lines {
+            assert!(
+                FrameBuffer::text_width(line, EVENT_TEXT_SCALE, Font::Ui) <= 600,
+                "each wrapped line must fit the width"
+            );
+        }
+        assert_eq!(lines.concat(), long, "wrapping must not drop characters");
+    }
+
+    #[test]
+    fn full_status_text_keeps_the_whole_error_message() {
+        let message = "refusing non-HTTPS calendar URL: ftp://example.com/very/long/path.ics";
+        let status = SourceStatus::Error {
+            synced_at_utc: NaiveDate::from_ymd_opt(2026, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+            message: message.to_string(),
+        };
+        assert!(full_status_text(&status).contains(message));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn editor_test_reports_the_full_error_for_a_missing_local_ics() {
+        with_temp_data_dir(|| {
+            let mut app = App::new().unwrap();
+            app.screen = Screen::Settings;
+
+            let layout = app.settings_layout();
+            let (kind, rect) = layout.add_buttons[0];
+            assert_eq!(kind, SourceKindChoice::LocalIcs);
+            app.handle_touch_tap(rect.x + 2, rect.y + 2);
+            for c in "Home".chars() {
+                app.handle_vkb(c as i32);
+            }
+            app.editor.as_mut().unwrap().handle_key(VkbKey::Tab);
+            for c in "/no/such/calendar-notes-test.ics".chars() {
+                app.handle_vkb(c as i32);
+            }
+
+            let layout = app.settings_layout();
+            let test = layout.editor_test_button.expect("editor has a TEST button");
+            app.handle_touch_tap(test.x + 2, test.y + 2);
+            assert!(app.editor_test_result.is_some());
+
+            for _ in 0..300 {
+                app.poll_background();
+                if app.editor_test_rx.is_none() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            let result = app
+                .editor_test_result
+                .clone()
+                .expect("a test result is shown");
+            assert!(result.starts_with("Error:"), "got: {result}");
+        });
     }
 
     #[test]

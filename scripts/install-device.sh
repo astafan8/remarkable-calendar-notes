@@ -1,8 +1,8 @@
 #!/usr/bin/env sh
 # Install an official Calendar Notes ZIP using one SSH password prompt.
 #
-# Works with either the all-in-one `remarkable-calendar-notes-<ver>.zip` or
-# the app-only `-armv7.zip`. The app is always installed; the optional
+# Works with the all-in-one `remarkable-calendar-notes-<ver>.zip` release
+# archive. The app is always installed; the optional
 # xochitl sidebar launcher is installed only when --sidebar is given.
 set -eu
 

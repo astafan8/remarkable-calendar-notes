@@ -1,10 +1,14 @@
 //! Development tasks for remarkable-calendar-notes.
 //!
-//! `cargo run -p xtask -- icon` (re)generates `assets/icon.png`
-//! deterministically: a small calendar-page glyph with a handwritten mark,
-//! drawn entirely with programmatic shapes (no external image assets, no
-//! third-party artwork), so the icon can always be reproduced or restyled
-//! without needing an image editor.
+//! `cargo run -p xtask -- icon` (re)generates `assets/icon.png` and
+//! `cargo run -p xtask -- sidebar-icon` (re)generates
+//! `assets/sidebar-icon.png` deterministically: a small calendar-page
+//! glyph with a handwritten mark, drawn entirely with programmatic shapes
+//! (no external image assets, no third-party artwork), so the icons can
+//! always be reproduced or restyled without needing an image editor. The
+//! `icon.png` is the full-color AppLoad tile; `sidebar-icon.png` is bold
+//! black line-art on a transparent background, because the xochitl sidebar
+//! tints icons by their alpha mask (a filled image would show as a blob).
 
 use std::env;
 use std::path::PathBuf;
@@ -149,6 +153,48 @@ fn build_icon() -> Canvas {
     c
 }
 
+/// A simplified, transparent-background icon for the xochitl sidebar.
+///
+/// The sidebar tints icons by their alpha channel, so a filled/opaque image
+/// (like the AppLoad `icon.png`) collapses into a solid black blob. This
+/// version draws only bold black line-art — a page outline, binder rings, a
+/// couple of grid lines, and a handwritten check — on a fully transparent
+/// background, so the sidebar mask shows a crisp calendar glyph at small
+/// sizes.
+fn build_sidebar_icon() -> Canvas {
+    let mut c = Canvas::new(); // fully transparent
+
+    let (px, py, pw, ph) = (44, 52, SIZE as i64 - 88, SIZE as i64 - 96);
+
+    // Binder rings above the page.
+    c.fill_circle(px + pw / 3, py, 12, INK_BLACK);
+    c.fill_circle(px + 2 * pw / 3, py, 12, INK_BLACK);
+
+    // Page outline (bold, so it survives downscaling to the sidebar).
+    c.stroke_rect(px, py, pw, ph, 12, INK_BLACK);
+
+    // Header separator under the top of the page.
+    let header_h = 40;
+    c.fill_rect(px, py + header_h, pw, 10, INK_BLACK);
+
+    // A minimal 2x2 grid in the body.
+    let body_top = py + header_h + 10;
+    let body_bottom = py + ph - 12;
+    let body_h = body_bottom - body_top;
+    let col_x = px + pw / 2;
+    c.fill_rect(col_x - 3, body_top, 6, body_h, INK_BLACK);
+    let row_y = body_top + body_h / 2;
+    c.fill_rect(px + 12, row_y - 3, pw - 24, 6, INK_BLACK);
+
+    // A bold handwritten check in the lower-left cell — the "notes" mark.
+    let cx = px + pw / 4;
+    let cy = row_y + body_h / 4;
+    c.draw_line(cx - 22, cy, cx - 4, cy + 20, 12, INK_BLACK);
+    c.draw_line(cx - 4, cy + 20, cx + 28, cy - 22, 12, INK_BLACK);
+
+    c
+}
+
 fn write_png(canvas: &Canvas, path: &PathBuf) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -188,8 +234,22 @@ fn main() -> std::process::ExitCode {
                 }
             }
         }
+        Some("sidebar-icon") => {
+            let out = repo_root().join("assets").join("sidebar-icon.png");
+            let canvas = build_sidebar_icon();
+            match write_png(&canvas, &out) {
+                Ok(()) => {
+                    println!("wrote {}", out.display());
+                    std::process::ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("failed to write {}: {e}", out.display());
+                    std::process::ExitCode::FAILURE
+                }
+            }
+        }
         _ => {
-            eprintln!("usage: cargo run -p xtask -- icon");
+            eprintln!("usage: cargo run -p xtask -- <icon|sidebar-icon>");
             std::process::ExitCode::FAILURE
         }
     }
@@ -306,10 +366,11 @@ mod packaging_tests {
     fn velbuild_source_and_release_workflow_agree_on_the_archive_name() {
         let text = velbuild();
         let pkgver = field(&text, "pkgver");
-        let archive = format!("remarkable-calendar-notes-{pkgver}-armv7.zip");
+        let archive = format!("remarkable-calendar-notes-{pkgver}.zip");
         let templated = archive.replace(pkgver, "$pkgver");
 
-        // The recipe downloads exactly what the release workflow uploads...
+        // The recipe downloads exactly the one archive the release workflow
+        // uploads...
         assert!(
             text.contains(&format!("/releases/download/v$pkgver/{templated}")),
             "source= must point at the release asset for v$pkgver"
@@ -322,17 +383,19 @@ mod packaging_tests {
         let workflow =
             fs::read_to_string(repo_root().join(".github/workflows/release.yml")).unwrap();
         assert!(
-            workflow.contains("dist/remarkable-calendar-notes-${version}-armv7.zip"),
+            workflow.contains("dist/remarkable-calendar-notes-${version}.zip"),
             "release.yml must build the archive name the recipe expects"
         );
-        // ...and the archive's single top-level directory is what the
-        // recipe's unpack()/package() steps reach into.
-        assert!(workflow.contains("dist/stage/remarkable-calendar-notes"));
-        assert!(workflow
-            .contains(r#"(cd dist/stage && zip -r -X "../../$out" remarkable-calendar-notes)"#));
-        assert!(text.contains("\"$srcdir\"/remarkable-calendar-notes/remarkable-calendar-notes"));
-        assert!(text.contains("\"$srcdir\"/remarkable-calendar-notes/icon.png"));
-        assert!(text.contains("\"$srcdir\"/remarkable-calendar-notes/external.manifest.json"));
+        // ...and the archive's single top-level directory
+        // (remarkable-calendar-notes-<ver>/) is what unpack()/package()
+        // reach into.
+        assert!(workflow.contains(
+            r#"(cd dist/stage-combined && zip -r -X "../../$out" "remarkable-calendar-notes-${version}")"#
+        ));
+        assert!(text.contains("remarkable-calendar-notes-$pkgver/remarkable-calendar-notes"));
+        assert!(text.contains(r#""$base"/remarkable-calendar-notes"#));
+        assert!(text.contains(r#""$base"/icon.png"#));
+        assert!(text.contains(r#""$base"/external.manifest.json"#));
     }
 
     #[test]
@@ -343,11 +406,16 @@ mod packaging_tests {
             assert!(workflow.contains(line), "release.yml must emit {line}");
         }
         // The publish job downloads the artifact into dist/ and uploads
-        // exactly those globs.
+        // exactly the single zip and its checksums — no per-piece archives
+        // or standalone .rcc.
         assert!(workflow.contains("path: dist"));
-        for glob in ["dist/*.zip", "dist/*.rcc", "dist/*.sha256", "dist/*.sha512"] {
+        for glob in ["dist/*.zip", "dist/*.sha256", "dist/*.sha512"] {
             assert!(workflow.contains(glob), "release.yml must upload {glob}");
         }
+        assert!(
+            !workflow.contains("dist/*.rcc"),
+            "the standalone .rcc must not be published as its own asset"
+        );
         assert!(!workflow.contains("remarkable-calendar-notes-releases"));
         assert!(!workflow.contains("secrets.PUBLIC_RELEASE_TOKEN"));
     }
@@ -385,22 +453,21 @@ mod packaging_tests {
             .contains("AppLoadLauncher.launchApplication(\"external::remarkable-calendar-notes\""));
         assert!(qmd.contains("calendarNotesSidebar\\"));
         assert!(qmd.contains("qrc:/remarkable-calendar-notes/icons/calendar-notes"));
-        assert!(recipe.contains("calendarNotesSidebar-3.27.rcc"));
         assert!(recipe.contains("calendarNotesSidebar.rcc"));
         let qrc =
             fs::read_to_string(repo_root().join("sidebar/3.27/calendarNotesSidebar.qrc")).unwrap();
-        assert!(qrc.contains("../../assets/icon.png"));
+        assert!(qrc.contains("../../assets/sidebar-icon.png"));
     }
 
     #[test]
-    fn release_workflow_builds_the_optional_sidebar_archive() {
+    fn release_workflow_publishes_only_the_single_all_in_one_archive() {
         let workflow =
             fs::read_to_string(repo_root().join(".github/workflows/release.yml")).unwrap();
-        assert!(workflow.contains("dist/remarkable-calendar-notes-${version}-xovi-sidebar.zip"));
+        // The one published archive bundles the sidebar (qmd + rcc) and the
+        // diagnostics/installers, so no separate per-piece zips exist.
         assert!(workflow.contains("sidebar/3.27/calendarNotesSidebar.qmd"));
         assert!(workflow.contains("sidebar/3.27/calendarNotesSidebar.qrc"));
-        assert!(workflow.contains("calendarNotesSidebar-3.27.rcc"));
-        assert!(workflow.contains("remarkable-calendar-notes-xovi-sidebar/qt-resource-rebuilder"));
+        assert!(workflow.contains("calendarNotesSidebar.rcc"));
         for helper in [
             "collect-device-log.ps1",
             "collect-device-log.sh",
@@ -410,7 +477,19 @@ mod packaging_tests {
         ] {
             assert!(
                 workflow.contains(helper),
-                "diagnostics release must include {helper}"
+                "the all-in-one archive must include {helper}"
+            );
+        }
+        // The obsolete per-piece archive names must be gone entirely.
+        for gone in [
+            "-armv7.zip",
+            "-xovi-sidebar.zip",
+            "-diagnostics.zip",
+            "calendarNotesSidebar-3.27.rcc",
+        ] {
+            assert!(
+                !workflow.contains(gone),
+                "release.yml must no longer reference {gone}"
             );
         }
     }
@@ -425,8 +504,8 @@ mod packaging_tests {
         assert!(workflow.contains("stage-combined"));
         assert!(workflow.contains(r#""$combined/sidebar/calendarNotesSidebar.rcc""#));
         assert!(workflow.contains(r#""$combined/diagnostics""#));
-        assert!(workflow.contains(r#"sha256sum "$all_out""#));
-        assert!(workflow.contains(r#"sha512sum "$all_out""#));
+        assert!(workflow.contains(r#"sha256sum "$out""#));
+        assert!(workflow.contains(r#"sha512sum "$out""#));
     }
 
     #[test]
