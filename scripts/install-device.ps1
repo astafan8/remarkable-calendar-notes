@@ -23,7 +23,6 @@ if (-not (Get-Command ssh -ErrorAction SilentlyContinue)) {
 }
 
 $wantSidebar = if ($Sidebar) { "1" } else { "0" }
-$encoded = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Resolve-Path $Bundle)))
 $remoteInstall = (@"
 want_sidebar=$wantSidebar
 set -eu
@@ -31,7 +30,7 @@ archive=/tmp/remarkable-calendar-notes-install.zip
 stage=/tmp/remarkable-calendar-notes-install
 rm -rf "`$stage"
 mkdir -p "`$stage"
-base64 -d >"`$archive"
+cat >"`$archive"
 unzip -oq "`$archive" -d "`$stage"
 app="`$(find "`$stage" -type f -name external.manifest.json -path '*/remarkable-calendar-notes/*' | head -n 1)"
 [ -n "`$app" ] || { echo "Calendar Notes app not found in bundle" >&2; exit 1; }
@@ -82,8 +81,24 @@ echo "Calendar Notes installed; executable permissions verified."
 "@) -replace "`r`n", "`n"
 
 Write-Host "Connecting to root@$Device (one SSH password prompt)..."
-$encoded | & ssh -o ConnectTimeout=30 "root@$Device" $remoteInstall
-if ($LASTEXITCODE -ne 0) {
+# Stream the raw ZIP to ssh's stdin as bytes and save it on the device with
+# `cat` (no `base64` is required on the tablet -- it isn't installed there).
+# PowerShell's pipeline is text-oriented and would corrupt binary, so drive
+# ssh via a process whose stdin we write raw bytes to.
+$psi = [System.Diagnostics.ProcessStartInfo]::new()
+$psi.FileName = "ssh"
+foreach ($arg in @("-o", "ConnectTimeout=30", "root@$Device", $remoteInstall)) {
+    $psi.ArgumentList.Add($arg)
+}
+$psi.RedirectStandardInput = $true
+$psi.UseShellExecute = $false
+$proc = [System.Diagnostics.Process]::Start($psi)
+$bytes = [IO.File]::ReadAllBytes((Resolve-Path $Bundle))
+$proc.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+$proc.StandardInput.BaseStream.Flush()
+$proc.StandardInput.Close()
+$proc.WaitForExit()
+if ($proc.ExitCode -ne 0) {
     Write-Host ""
     Write-Host "If this failed at the SSH connection (e.g. 'Timeout during banner" -ForegroundColor Yellow
     Write-Host "exchange' with no password prompt), the address is almost certainly" -ForegroundColor Yellow

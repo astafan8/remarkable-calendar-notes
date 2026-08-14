@@ -28,9 +28,7 @@ if (-not (Test-Path $payloadPath)) {
 }
 
 $payloadText = (Get-Content $payloadPath -Raw) -replace "`r`n", "`n"
-$payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payloadText))
 $include = if ($IncludeSystemLog) { "1" } else { "0" }
-$remoteCommand = "printf '%s' '$payload' | base64 -d | INCLUDE_SYSTEM_LOG=$include OUTPUT_ENCODING=base64 sh"
 
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $name = "calendar-notes-diagnostics-$stamp"
@@ -39,19 +37,32 @@ $archive = Join-Path $OutputDirectory "$name.tar.gz"
 New-Item -ItemType Directory -Force -Path $destination | Out-Null
 
 Write-Host "Connecting to root@$Device (one SSH password prompt)..."
-$encodedArchive = & ssh -o ConnectTimeout=10 "root@$Device" $remoteCommand
-if ($LASTEXITCODE -ne 0) {
+# The tablet has no `base64`. Feed the diagnostic script to a remote
+# `sh -s` over ssh's stdin, and read the raw .tar.gz it streams back on
+# stdout straight into a file (PowerShell's text pipeline would corrupt
+# binary, so drive ssh via a process and copy the raw streams).
+$psi = [System.Diagnostics.ProcessStartInfo]::new()
+$psi.FileName = "ssh"
+foreach ($arg in @("-o", "ConnectTimeout=30", "root@$Device", "INCLUDE_SYSTEM_LOG=$include sh -s")) {
+    $psi.ArgumentList.Add($arg)
+}
+$psi.RedirectStandardInput = $true
+$psi.RedirectStandardOutput = $true
+$psi.UseShellExecute = $false
+$proc = [System.Diagnostics.Process]::Start($psi)
+$scriptBytes = [Text.Encoding]::UTF8.GetBytes($payloadText)
+$proc.StandardInput.BaseStream.Write($scriptBytes, 0, $scriptBytes.Length)
+$proc.StandardInput.BaseStream.Flush()
+$proc.StandardInput.Close()
+$fileStream = [IO.File]::Open($archive, [IO.FileMode]::Create, [IO.FileAccess]::Write)
+$proc.StandardOutput.BaseStream.CopyTo($fileStream)
+$fileStream.Close()
+$proc.WaitForExit()
+if ($proc.ExitCode -ne 0) {
     throw "Diagnostics collection failed. Verify USB/Wi-Fi connectivity and the tablet SSH password."
 }
-
-$encoded = ($encodedArchive -join "").Trim()
-if (-not $encoded) {
+if ((Get-Item $archive).Length -eq 0) {
     throw "The tablet returned an empty diagnostics archive."
-}
-try {
-    [IO.File]::WriteAllBytes($archive, [Convert]::FromBase64String($encoded))
-} catch {
-    throw "The tablet returned invalid diagnostics data: $($_.Exception.Message)"
 }
 
 & tar -xzf $archive -C $destination

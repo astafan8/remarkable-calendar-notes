@@ -42,10 +42,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -r "$bundle" ] || { echo "error: bundle not found: $bundle" >&2; exit 1; }
-for command in ssh base64; do
-    command -v "$command" >/dev/null 2>&1 ||
-        { echo "error: $command is required" >&2; exit 1; }
-done
+command -v ssh >/dev/null 2>&1 || { echo "error: ssh is required" >&2; exit 1; }
 
 remote_body='
 set -eu
@@ -53,7 +50,7 @@ archive=/tmp/remarkable-calendar-notes-install.zip
 stage=/tmp/remarkable-calendar-notes-install
 rm -rf "$stage"
 mkdir -p "$stage"
-base64 -d >"$archive"
+cat >"$archive"
 unzip -oq "$archive" -d "$stage"
 app="$(find "$stage" -type f -name external.manifest.json -path "*/remarkable-calendar-notes/*" | head -n 1)"
 [ -n "$app" ] || { echo "Calendar Notes app not found in bundle" >&2; exit 1; }
@@ -130,4 +127,7 @@ if ! ssh -o ConnectTimeout=30 -o ControlMaster=yes -o ControlPath="$control" \
 fi
 
 # Reuse the already-authenticated master connection, so no second prompt.
-base64 <"$bundle" | ssh -o ControlPath="$control" "root@$device" "$remote_install"
+# The raw ZIP is streamed over ssh's (binary-safe) stdin and saved on the
+# device with `cat` — no `base64` is required on the tablet (it isn't
+# installed there).
+ssh -o ControlPath="$control" "root@$device" "$remote_install" <"$bundle"

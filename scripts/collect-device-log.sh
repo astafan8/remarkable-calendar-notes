@@ -44,7 +44,7 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-for command in ssh tar base64; do
+for command in ssh tar; do
     if ! command -v "$command" >/dev/null 2>&1; then
         echo "error: $command is required on this computer" >&2
         exit 1
@@ -57,8 +57,6 @@ if [ ! -r "$payload_path" ]; then
     exit 1
 fi
 
-payload="$(base64 <"$payload_path" | tr -d '\r\n')"
-remote_command="printf '%s' '$payload' | base64 -d | INCLUDE_SYSTEM_LOG=$include_system_log OUTPUT_ENCODING=raw sh"
 stamp="$(date +%Y%m%d-%H%M%S)"
 name="calendar-notes-diagnostics-$stamp"
 destination="$output_directory/$name"
@@ -66,7 +64,11 @@ archive="$output_directory/$name.tar.gz"
 mkdir -p "$destination"
 
 echo "Connecting to root@$device (one SSH password prompt)..."
-if ! ssh -o ConnectTimeout=10 "root@$device" "$remote_command" >"$archive"; then
+# Feed the diagnostic script to a remote `sh -s` over ssh's stdin (no
+# `base64` on the tablet), and capture the raw .tar.gz it streams back on
+# stdout.
+if ! ssh -o ConnectTimeout=30 "root@$device" \
+    "INCLUDE_SYSTEM_LOG=$include_system_log sh -s" <"$payload_path" >"$archive"; then
     echo "error: diagnostics collection failed" >&2
     echo "Verify USB/Wi-Fi connectivity and the tablet SSH password." >&2
     exit 1
