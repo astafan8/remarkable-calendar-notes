@@ -56,8 +56,8 @@ pub fn layout(view: ViewMode, anchor: NaiveDate, canvas_w: i32, canvas_h: i32) -
 /// Monday→Sunday from the first month straight into the second, with no
 /// duplicated boundary week. `anchor`'s month and the next month are the two
 /// in-focus months; the leading/trailing days needed to fill whole weeks are
-/// out of focus. Ink normalization is per-cell (see [`ink_rect`]), so
-/// handwriting keeps the same aspect ratio as in every other view.
+/// out of focus. Ink normalization is per-cell over the whole cell (see
+/// [`ink_rect`]), so handwriting fills each cell edge to edge.
 fn two_month_grid(anchor: NaiveDate, canvas_w: i32, canvas_h: i32) -> Vec<DateCell> {
     let first_month = anchor.with_day(1).unwrap();
     let second_month = first_of_next_month(anchor);
@@ -331,36 +331,22 @@ pub fn cell_at(cells: &[DateCell], px: i32, py: i32) -> Option<&DateCell> {
     })
 }
 
-/// The largest centered 3:4 writing surface that fits inside `rect`.
-///
-/// Every calendar view uses this same canonical aspect ratio for ink.
-/// Cells may letterbox a little, but handwriting is never stretched
-/// independently on the X and Y axes when changing views.
+/// The entire cell is the writing surface: ink can be drawn anywhere in a
+/// cell, edge to edge, with no letterboxed margins. (The stored strokes are
+/// normalized to the cell, so the same note is rescaled to each view's cell
+/// shape when you switch views.)
 pub fn ink_rect(rect: Rect) -> Rect {
-    const ASPECT_W: i32 = 3;
-    const ASPECT_H: i32 = 4;
-    if rect.w * ASPECT_H > rect.h * ASPECT_W {
-        let w = (rect.h * ASPECT_W / ASPECT_H).max(1);
-        Rect {
-            x: rect.x + (rect.w - w) / 2,
-            y: rect.y,
-            w,
-            h: rect.h.max(1),
-        }
-    } else {
-        let h = (rect.w * ASPECT_H / ASPECT_W).max(1);
-        Rect {
-            x: rect.x,
-            y: rect.y + (rect.h - h) / 2,
-            w: rect.w.max(1),
-            h,
-        }
+    Rect {
+        x: rect.x,
+        y: rect.y,
+        w: rect.w.max(1),
+        h: rect.h.max(1),
     }
 }
 
 /// Convert an absolute point into canonical ink coordinates normalized
-/// `[0,1]`, clamping points in the letterboxed margin to the writing
-/// surface's nearest edge.
+/// `[0,1]` over the whole cell, clamping points just outside the cell to
+/// the nearest edge.
 pub fn normalize_within(rect: Rect, px: i32, py: i32) -> (f32, f32) {
     let rect = ink_rect(rect);
     let nx = ((px - rect.x) as f32 / rect.w.max(1) as f32).clamp(0.0, 1.0);
@@ -513,30 +499,28 @@ mod tests {
     }
 
     #[test]
-    fn ink_mapping_preserves_one_aspect_ratio_in_differently_shaped_cells() {
+    fn ink_rect_fills_the_whole_cell_with_no_margins() {
         let wide = Rect {
-            x: 0,
-            y: 0,
+            x: 10,
+            y: 20,
             w: 1200,
             h: 800,
         };
-        let tall = Rect {
-            x: 0,
-            y: 0,
-            w: 300,
-            h: 900,
-        };
-        let wide_ink = ink_rect(wide);
-        let tall_ink = ink_rect(tall);
-        assert_eq!(wide_ink.w * 4, wide_ink.h * 3);
-        assert_eq!(tall_ink.w * 4, tall_ink.h * 3);
+        // The writing surface is the entire cell — no letterboxed margins on
+        // any side, so the user can draw right up to every edge.
+        assert_eq!(ink_rect(wide), wide);
 
-        let wide_dx = denormalize_within(wide, 1.0, 0.5).0 - denormalize_within(wide, 0.0, 0.5).0;
-        let wide_dy = denormalize_within(wide, 0.5, 1.0).1 - denormalize_within(wide, 0.5, 0.0).1;
-        let tall_dx = denormalize_within(tall, 1.0, 0.5).0 - denormalize_within(tall, 0.0, 0.5).0;
-        let tall_dy = denormalize_within(tall, 0.5, 1.0).1 - denormalize_within(tall, 0.5, 0.0).1;
-        assert_eq!(wide_dx * 4, wide_dy * 3);
-        assert_eq!(tall_dx * 4, tall_dy * 3);
+        // The extreme corners of the cell map to the normalized corners and
+        // back, edge to edge.
+        assert_eq!(denormalize_within(wide, 0.0, 0.0), (wide.x, wide.y));
+        assert_eq!(
+            denormalize_within(wide, 1.0, 1.0),
+            (wide.x + wide.w, wide.y + wide.h)
+        );
+        // A point on the far-left edge normalizes to x = 0 (previously it sat
+        // in an unusable margin).
+        let (nx, _) = normalize_within(wide, wide.x, wide.y + wide.h / 2);
+        assert_eq!(nx, 0.0);
     }
 
     #[test]

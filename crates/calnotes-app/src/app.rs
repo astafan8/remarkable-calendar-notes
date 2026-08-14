@@ -1342,7 +1342,9 @@ impl App {
         for (field, rect) in &layout.editor_fields {
             if within(*rect, x, y) {
                 if let Some(editor) = &mut self.editor {
-                    editor.focus = *field;
+                    // Position the cursor where the tap landed (finger or
+                    // pen); tapping past the text puts it at the end.
+                    editor.place_cursor_from_tap(*field, rect.x + 12, x);
                 }
                 self.offset_editor = None;
                 self.status = "USE APPLOAD KEYBOARD BUTTON".to_string();
@@ -1898,6 +1900,26 @@ fn text_with_cursor(text: &str, cursor: usize) -> String {
     result
 }
 
+/// The character index whose boundary is nearest `tap_x`, for `displayed`
+/// text rendered starting at `text_start_x` (in [`Font::Ui`] at
+/// [`BODY_TEXT_SCALE`]). Tapping past the last character returns the end
+/// index, so the cursor lands after the final character.
+fn cursor_index_for_tap(displayed: &str, text_start_x: i32, tap_x: i32) -> usize {
+    let chars: Vec<char> = displayed.chars().collect();
+    let mut best_index = 0usize;
+    let mut best_delta = i32::MAX;
+    for index in 0..=chars.len() {
+        let prefix: String = chars[..index].iter().collect();
+        let width = FrameBuffer::text_width(&prefix, BODY_TEXT_SCALE, Font::Ui);
+        let delta = (text_start_x + width - tap_x).abs();
+        if delta < best_delta {
+            best_delta = delta;
+            best_index = index;
+        }
+    }
+    best_index
+}
+
 /// Normalize a user-entered calendar URL: trim surrounding whitespace and,
 /// if no scheme was typed, assume HTTPS. A URL that already carries an
 /// http(s) scheme is left as typed (a plain `http://` URL is still refused
@@ -2144,6 +2166,26 @@ impl SourceEditor {
             return;
         }
         self.focused_field().apply_key(key);
+    }
+
+    /// Focus `field` and move its text cursor to the character boundary
+    /// nearest a tap at `tap_x`, where the field's value is rendered
+    /// starting at `text_start_x`. Tapping past the last character puts the
+    /// cursor at the end. Driven by both finger and pen taps.
+    pub fn place_cursor_from_tap(&mut self, field: EditorField, text_start_x: i32, tap_x: i32) {
+        self.focus = field;
+        let secret = matches!(
+            field,
+            EditorField::ClientSecret | EditorField::AppSpecificPassword
+        );
+        let value = self.focused_field();
+        let displayed = if secret {
+            calnotes_core::config::mask_secret(&value.text)
+        } else {
+            value.text.clone()
+        };
+        let count = value.text.chars().count();
+        value.cursor = cursor_index_for_tap(&displayed, text_start_x, tap_x).min(count);
     }
 
     fn fields_for_kind(&self) -> Vec<EditorField> {
@@ -2539,6 +2581,39 @@ mod tests {
         assert_eq!(editor.label.text, "Work");
         assert_eq!(editor.url.text, "https://example.com/work.ics");
         assert_eq!(editor.editing_id, Some("s1".to_string()));
+    }
+
+    #[test]
+    fn tapping_in_a_field_moves_the_cursor_to_the_tap_position() {
+        let text = "https://ex.com/c.ics";
+        let mut editor = SourceEditor::new_for_add(SourceKindChoice::HttpsIcs);
+        editor.focus = EditorField::Url;
+        for c in text.chars() {
+            editor.url.apply_key(VkbKey::Char(c));
+        }
+        let start_x = 100;
+
+        // Tap at the boundary after the first 5 characters.
+        let target = 5;
+        let prefix: String = text.chars().take(target).collect();
+        let w = FrameBuffer::text_width(&prefix, BODY_TEXT_SCALE, Font::Ui);
+        editor.place_cursor_from_tap(EditorField::Url, start_x, start_x + w);
+        assert_eq!(editor.focus, EditorField::Url);
+        assert_eq!(editor.url.cursor, target);
+
+        // Tapping far past the text puts the cursor at the very end.
+        editor.place_cursor_from_tap(EditorField::Url, start_x, start_x + 100_000);
+        assert_eq!(editor.url.cursor, text.chars().count());
+
+        // Tapping to the left of the text puts it at the start.
+        editor.place_cursor_from_tap(EditorField::Url, start_x, start_x - 100_000);
+        assert_eq!(editor.url.cursor, 0);
+
+        // Tapping a different field focuses it (works for finger and pen,
+        // which share this path).
+        editor.place_cursor_from_tap(EditorField::Label, start_x, start_x);
+        assert_eq!(editor.focus, EditorField::Label);
+        assert_eq!(editor.label.cursor, 0);
     }
 
     #[test]
