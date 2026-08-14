@@ -1,10 +1,14 @@
 //! Development tasks for remarkable-calendar-notes.
 //!
-//! `cargo run -p xtask -- icon` (re)generates `assets/icon.png`
-//! deterministically: a small calendar-page glyph with a handwritten mark,
-//! drawn entirely with programmatic shapes (no external image assets, no
-//! third-party artwork), so the icon can always be reproduced or restyled
-//! without needing an image editor.
+//! `cargo run -p xtask -- icon` (re)generates `assets/icon.png` and
+//! `cargo run -p xtask -- sidebar-icon` (re)generates
+//! `assets/sidebar-icon.png` deterministically: a small calendar-page
+//! glyph with a handwritten mark, drawn entirely with programmatic shapes
+//! (no external image assets, no third-party artwork), so the icons can
+//! always be reproduced or restyled without needing an image editor. The
+//! `icon.png` is the full-color AppLoad tile; `sidebar-icon.png` is bold
+//! black line-art on a transparent background, because the xochitl sidebar
+//! tints icons by their alpha mask (a filled image would show as a blob).
 
 use std::env;
 use std::path::PathBuf;
@@ -149,6 +153,48 @@ fn build_icon() -> Canvas {
     c
 }
 
+/// A simplified, transparent-background icon for the xochitl sidebar.
+///
+/// The sidebar tints icons by their alpha channel, so a filled/opaque image
+/// (like the AppLoad `icon.png`) collapses into a solid black blob. This
+/// version draws only bold black line-art — a page outline, binder rings, a
+/// couple of grid lines, and a handwritten check — on a fully transparent
+/// background, so the sidebar mask shows a crisp calendar glyph at small
+/// sizes.
+fn build_sidebar_icon() -> Canvas {
+    let mut c = Canvas::new(); // fully transparent
+
+    let (px, py, pw, ph) = (44, 52, SIZE as i64 - 88, SIZE as i64 - 96);
+
+    // Binder rings above the page.
+    c.fill_circle(px + pw / 3, py, 12, INK_BLACK);
+    c.fill_circle(px + 2 * pw / 3, py, 12, INK_BLACK);
+
+    // Page outline (bold, so it survives downscaling to the sidebar).
+    c.stroke_rect(px, py, pw, ph, 12, INK_BLACK);
+
+    // Header separator under the top of the page.
+    let header_h = 40;
+    c.fill_rect(px, py + header_h, pw, 10, INK_BLACK);
+
+    // A minimal 2x2 grid in the body.
+    let body_top = py + header_h + 10;
+    let body_bottom = py + ph - 12;
+    let body_h = body_bottom - body_top;
+    let col_x = px + pw / 2;
+    c.fill_rect(col_x - 3, body_top, 6, body_h, INK_BLACK);
+    let row_y = body_top + body_h / 2;
+    c.fill_rect(px + 12, row_y - 3, pw - 24, 6, INK_BLACK);
+
+    // A bold handwritten check in the lower-left cell — the "notes" mark.
+    let cx = px + pw / 4;
+    let cy = row_y + body_h / 4;
+    c.draw_line(cx - 22, cy, cx - 4, cy + 20, 12, INK_BLACK);
+    c.draw_line(cx - 4, cy + 20, cx + 28, cy - 22, 12, INK_BLACK);
+
+    c
+}
+
 fn write_png(canvas: &Canvas, path: &PathBuf) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -188,8 +234,22 @@ fn main() -> std::process::ExitCode {
                 }
             }
         }
+        Some("sidebar-icon") => {
+            let out = repo_root().join("assets").join("sidebar-icon.png");
+            let canvas = build_sidebar_icon();
+            match write_png(&canvas, &out) {
+                Ok(()) => {
+                    println!("wrote {}", out.display());
+                    std::process::ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("failed to write {}: {e}", out.display());
+                    std::process::ExitCode::FAILURE
+                }
+            }
+        }
         _ => {
-            eprintln!("usage: cargo run -p xtask -- icon");
+            eprintln!("usage: cargo run -p xtask -- <icon|sidebar-icon>");
             std::process::ExitCode::FAILURE
         }
     }
@@ -396,7 +456,7 @@ mod packaging_tests {
         assert!(recipe.contains("calendarNotesSidebar.rcc"));
         let qrc =
             fs::read_to_string(repo_root().join("sidebar/3.27/calendarNotesSidebar.qrc")).unwrap();
-        assert!(qrc.contains("../../assets/icon.png"));
+        assert!(qrc.contains("../../assets/sidebar-icon.png"));
     }
 
     #[test]
