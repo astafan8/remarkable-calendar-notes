@@ -132,6 +132,13 @@ Google and iCloud setup need additional provider-specific details; see
 
 ## Troubleshooting
 
+- **Installer shows no password prompt / "Timeout during banner exchange":**
+  the SSH connection is failing at the handshake, before authentication, so
+  it is not the ZIP transfer. This is almost always the wrong address. The
+  installer defaults to the USB IP `10.11.99.1`; over Wi-Fi pass your
+  tablet's IP instead, e.g. `./install-device.sh --bundle <zip> --device
+  192.168.1.100` (or `-Device` in PowerShell). For USB, make sure the cable
+  is connected and `http://10.11.99.1` opens the reMarkable web UI first.
 - **No AppLoad sidebar item:** XOVI is not running. Triple-press power or
   SSH in and run `xovi/start`.
 - **No Calendar Notes sidebar icon:** the optional QMD is OS 3.27-only.

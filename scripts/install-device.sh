@@ -107,4 +107,27 @@ remote_install="want_sidebar=$sidebar
 $remote_body"
 
 echo "Connecting to root@$device (one SSH password prompt)..."
-base64 <"$bundle" | ssh -o ConnectTimeout=10 "root@$device" "$remote_install"
+
+control="${TMPDIR:-/tmp}/rcn-ssh-$$.sock"
+cleanup_master() {
+    ssh -o ControlPath="$control" -O exit "root@$device" 2>/dev/null || true
+    rm -f "$control"
+}
+trap cleanup_master EXIT INT TERM HUP
+
+# Open a single authenticated master connection first. This prompts for the
+# password once and, crucially, fails fast with a clear message if the tablet
+# is unreachable — before we stream ~2 MB of ZIP. A dropped SSH handshake here
+# ("Timeout during banner exchange") almost always means the wrong address,
+# not a problem with the transfer.
+if ! ssh -o ConnectTimeout=30 -o ControlMaster=yes -o ControlPath="$control" \
+    -o ControlPersist=120 "root@$device" true; then
+    echo "error: could not establish an SSH connection to root@$device." >&2
+    echo "  * Over USB: keep the default 10.11.99.1 and make sure the cable is" >&2
+    echo "    connected (http://10.11.99.1 should open the reMarkable USB web UI)." >&2
+    echo "  * Over Wi-Fi: pass --device <tablet IP>, e.g. --device 192.168.1.100." >&2
+    exit 1
+fi
+
+# Reuse the already-authenticated master connection, so no second prompt.
+base64 <"$bundle" | ssh -o ControlPath="$control" "root@$device" "$remote_install"
