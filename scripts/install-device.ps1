@@ -82,8 +82,15 @@ echo "Calendar Notes installed; executable permissions verified."
 "@) -replace "`r`n", "`n"
 
 Write-Host "Connecting to root@$Device (one SSH password prompt)..."
-$encoded | & ssh -o ConnectTimeout=10 "root@$Device" $remoteInstall
+$encoded | & ssh -o ConnectTimeout=30 "root@$Device" $remoteInstall
 if ($LASTEXITCODE -ne 0) {
+    Write-Host ""
+    Write-Host "If this failed at the SSH connection (e.g. 'Timeout during banner" -ForegroundColor Yellow
+    Write-Host "exchange' with no password prompt), the address is almost certainly" -ForegroundColor Yellow
+    Write-Host "wrong -- not the transfer:" -ForegroundColor Yellow
+    Write-Host "  * Over USB: keep the default 10.11.99.1 and check the cable" -ForegroundColor Yellow
+    Write-Host "    (http://10.11.99.1 should open the reMarkable USB web UI)."   -ForegroundColor Yellow
+    Write-Host "  * Over Wi-Fi: pass -Device <tablet IP>, e.g. -Device 192.168.1.100." -ForegroundColor Yellow
     throw "Installation failed."
 }
 
