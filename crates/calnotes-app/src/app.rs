@@ -2478,7 +2478,7 @@ mod tests {
             assert_eq!(kind, SourceKindChoice::LocalIcs);
             app.handle_touch_tap(rect.x + 2, rect.y + 2);
             assert!(app.editor.is_some());
-            for c in "Home".chars() {
+            for c in "home".chars() {
                 app.handle_vkb(c as i32);
             }
             app.editor.as_mut().unwrap().handle_key(VkbKey::Tab);
@@ -2490,7 +2490,7 @@ mod tests {
             let save = layout.save_button.unwrap();
             app.handle_touch_tap(save.x + 2, save.y + 2);
             assert_eq!(app.state.config.sources.len(), 1);
-            assert_eq!(app.state.config.sources[0].label, "Home");
+            assert_eq!(app.state.config.sources[0].label, "home");
             assert!(app.editor.is_none());
 
             // Toggle enable off.
@@ -2504,7 +2504,7 @@ mod tests {
             let edit = layout.source_rows[0].edit;
             app.handle_touch_tap(edit.x + 2, edit.y + 2);
             assert!(app.editor.is_some());
-            assert_eq!(app.editor.as_ref().unwrap().label.text, "Home");
+            assert_eq!(app.editor.as_ref().unwrap().label.text, "home");
 
             // Cancel instead of saving.
             let layout = app.settings_layout();
@@ -2654,7 +2654,7 @@ mod tests {
             let (kind, rect) = layout.add_buttons[0];
             assert_eq!(kind, SourceKindChoice::LocalIcs);
             app.handle_touch_tap(rect.x + 2, rect.y + 2);
-            for c in "Home".chars() {
+            for c in "home".chars() {
                 app.handle_vkb(c as i32);
             }
             app.editor.as_mut().unwrap().handle_key(VkbKey::Tab);
