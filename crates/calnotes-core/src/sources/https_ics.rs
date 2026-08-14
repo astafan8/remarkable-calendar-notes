@@ -18,9 +18,24 @@ pub fn fetch_ics(url: &str) -> Result<String, SourceError> {
     }
     let response = ureq::get(url)
         .timeout(REQUEST_TIMEOUT)
-        .set("User-Agent", "remarkable-calendar-notes/0.1")
+        // Some calendar hosts/CDNs return 404/403 to requests that lack a
+        // browser-like User-Agent or an Accept header (even though the same
+        // URL works in curl), so send both.
+        .set(
+            "User-Agent",
+            "Mozilla/5.0 (compatible; remarkable-calendar-notes/0.1; +https://github.com/astafan8/remarkable-calendar-notes)",
+        )
+        .set("Accept", "text/calendar, text/plain, */*")
         .call()
-        .map_err(|e| SourceError::Http(e.to_string()))?;
+        .map_err(|e| match e {
+            // Include the final (post-redirect) URL and status so a mistyped
+            // path or an unexpected redirect is visible in the TEST result.
+            ureq::Error::Status(code, response) => SourceError::Http(format!(
+                "HTTP {code} from {}",
+                response.get_url()
+            )),
+            other => SourceError::Http(other.to_string()),
+        })?;
     response
         .into_string()
         .map_err(|e| SourceError::Parse(e.to_string()))

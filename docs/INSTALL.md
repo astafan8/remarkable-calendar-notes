@@ -118,10 +118,12 @@ is optional and left off unless you pass `-Sidebar` / `--sidebar`.
    calendar source.
 4. For the quickest test, choose **+ URL**, tap each large field and enter
    an HTTPS `.ics` subscription URL. Tap AppLoad's keyboard button in the
-   window chrome when the app asks for text. Then tap **TEST** inside the
-   editor: the full result — or the complete error message — is printed,
-   wrapped, just under the button so you can read all of it. Each SET
-   sub-menu (File, URL, Google, iCloud) has its own **TEST** button.
+   window chrome when the app asks for text. You can tap (finger or pen)
+   anywhere inside a field to move the text cursor there — tapping past the
+   last character puts it at the end. Then tap **TEST** inside the editor:
+   the full result — or the complete error message — is printed, wrapped,
+   just under the button so you can read all of it. Each SET sub-menu
+   (File, URL, Google, iCloud) has its own **TEST** button.
 5. Return to the calendar and write in a day cell with **PEN**. Try
    **ERASE** and **LASSO**, then change
    between Day, Week, Work Week, Two Weeks, and Month to confirm that the

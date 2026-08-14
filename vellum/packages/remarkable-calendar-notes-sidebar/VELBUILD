@@ -1,7 +1,7 @@
 maintainer="astafan8 <astafan8@users.noreply.github.com>"
 status="experimental"
 pkgname=remarkable-calendar-notes-sidebar
-pkgver=0.1.15
+pkgver=0.1.16
 pkgrel=0
 upstream_author="astafan8"
 category="ui"
@@ -34,8 +34,9 @@ package() {
 		"$pkgdir"/home/root/.vellum/licenses/$pkgname/SOURCES
 }
 
-# Checksums recorded from the published v0.1.15 release.
+# Placeholders until v0.1.16 is published; fill via
+# scripts/update-vellum-checksums.sh (the only supported way).
 sha512sums="
-01d281dfca151c8b7f0d9f3c5ff6b616c28a69493ff84055583914b9fadeae77a0b8f4cd12293b955d4c017c2f758a6f15da14c538dd4b78fa34c541a5c8327c  remarkable-calendar-notes-0.1.15.zip
-d361e5e8201481c6346ee6a886592c51265112be550d5224f1a7a6e116255c2f1ab8788df579d9b8372ed7bfd19bac4b6e70e00b472642966ab5b319b99a2686  LICENSE
+PLACEHOLDER-ALLINONE-ZIP  remarkable-calendar-notes-0.1.16.zip
+PLACEHOLDER-LICENSE  LICENSE
 "
