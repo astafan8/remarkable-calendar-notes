@@ -50,9 +50,8 @@ predeinstall() {
 	fi
 }
 
-# Placeholders until v0.1.14 is published; fill via
-# scripts/update-vellum-checksums.sh (the only supported way).
+# Checksums recorded from the published v0.1.14 release.
 sha512sums="
-PLACEHOLDER-ALLINONE-ZIP  remarkable-calendar-notes-0.1.14.zip
-PLACEHOLDER-LICENSE  LICENSE
+bc68fa5fecd1c7522358778ec270767968c6a67598932ac958ffae0c4906f339e3d5df8edc98c18b56f840e40f85aff364fcc25b23647454ab0ec25ab686c052  remarkable-calendar-notes-0.1.14.zip
+9f39ea5e24a0eaf3f0e3217170cded95184fe8a6f179d4d19c4c11c110e5be135be23d7edb0b3cec093d1a4ea93ffec753f4b8fcf9b0ac1fc5856f7a95f13773  LICENSE
 "
