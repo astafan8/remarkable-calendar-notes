@@ -10,8 +10,8 @@ crates/
       ics.rs         RFC 5545 line unfolding, escaping, DATE/DATE-TIME parsing
       recurrence.rs  Bounded RRULE expansion (DAILY/WEEKLY/MONTHLY/YEARLY)
       ink.rs         Normalized handwritten strokes, undo/clear-day
-      view.rs        Pure Day/Week/WorkWeek/TwoWeeks/Month grid geometry
-      render.rs      RGB565 software framebuffer + tiny bitmap font
+      view.rs        Pure Day/Week/WorkWeek/TwoWeeks/Month/TwoMonths grid geometry
+      render.rs      RGB565 software framebuffer; bitmap font + JetBrains Mono (ab_glyph)
       vkb.rs         AppLoad virtual-keyboard key decoding + text fields
       persistence.rs Atomic JSON read/write, data-dir resolution
       config.rs      AppState (config + ink) load/save, secret masking
@@ -131,8 +131,10 @@ leaving a moved view blank until the network answers.
 ## Rendering
 
 `calnotes-core::render::FrameBuffer` is a grayscale-only RGB565 pixel
-buffer with basic primitives (rects, lines, a 3x5 bitmap font). The exact
-same drawing code:
+buffer with basic primitives (rects, lines, and text via [`Font`]). Text
+is drawn either with a compact 3x5 bitmap font (calendar chrome) or an
+embedded Latin subset of JetBrains Mono rasterized with `ab_glyph`
+(settings menu). The exact same drawing code:
 
 - renders to QTFB's shared memory on-device (`calnotes-device` + the
   `run` subcommand), and

@@ -18,7 +18,7 @@
 #![cfg_attr(not(unix), allow(dead_code))]
 
 use crate::app::{App, PenSegment};
-use calnotes_core::render::{FrameBuffer, BLACK};
+use calnotes_core::render::{Font, FrameBuffer, BLACK};
 use calnotes_core::view::Rect;
 use std::io;
 use std::time::Duration;
@@ -77,24 +77,31 @@ pub fn render_fatal_screen(fb: &mut FrameBuffer, title: &str, detail: &str, log_
         },
         BLACK,
     );
-    fb.draw_text(left, 140, "CALENDAR NOTES", BLACK, 6);
-    fb.draw_text(left, 280, title, BLACK, 5);
+    fb.draw_text(left, 140, "CALENDAR NOTES", BLACK, 6, Font::Bitmap);
+    fb.draw_text(left, 280, title, BLACK, 5, Font::Bitmap);
 
     // The failure message, wrapped so nothing important is cut off.
     let mut y = 400;
     for line in wrap(detail, chars_per_line(width, left, 3)) {
-        fb.draw_text(left, y, &line, BLACK, 3);
+        fb.draw_text(left, y, &line, BLACK, 3, Font::Bitmap);
         y += 40;
     }
 
     y += 40;
-    fb.draw_text(left, y, "DETAILS WERE WRITTEN TO THE LOG FILE:", BLACK, 3);
+    fb.draw_text(
+        left,
+        y,
+        "DETAILS WERE WRITTEN TO THE LOG FILE:",
+        BLACK,
+        3,
+        Font::Bitmap,
+    );
     y += 50;
     // The full log path, wrapped rather than truncated — the whole point of
     // showing it is so the user can find and share it, so it must be
     // readable in its entirety.
     for line in wrap(log_path, chars_per_line(width, left, 2)) {
-        fb.draw_text(left, y, &line, BLACK, 2);
+        fb.draw_text(left, y, &line, BLACK, 2, Font::Bitmap);
         y += 30;
     }
 
@@ -105,8 +112,16 @@ pub fn render_fatal_screen(fb: &mut FrameBuffer, title: &str, detail: &str, log_
         "REOPEN THE APP, OR RUN THE DIAGNOSTICS COLLECTOR",
         BLACK,
         2,
+        Font::Bitmap,
     );
-    fb.draw_text(left, y + 30, "AND SHARE THE LOG TO GET HELP.", BLACK, 2);
+    fb.draw_text(
+        left,
+        y + 30,
+        "AND SHARE THE LOG TO GET HELP.",
+        BLACK,
+        2,
+        Font::Bitmap,
+    );
 }
 
 pub fn render_startup_screen(fb: &mut FrameBuffer) {
@@ -122,24 +137,24 @@ pub fn render_startup_screen(fb: &mut FrameBuffer) {
         },
         BLACK,
     );
-    fb.draw_text(100, 300, "CALENDAR NOTES", BLACK, 7);
-    fb.draw_text(100, 480, "STARTING...", BLACK, 5);
+    fb.draw_text(100, 300, "CALENDAR NOTES", BLACK, 7, Font::Bitmap);
+    fb.draw_text(100, 480, "STARTING...", BLACK, 5, Font::Bitmap);
 }
 
 /// How many characters of `scale`-sized bitmap text fit between `left` and
 /// the right margin (a symmetric margin is assumed).
 fn chars_per_line(width: i32, left: i32, scale: i32) -> usize {
-    let usable = (width - 2 * left).max(0);
-    (usable / (4 * scale)).max(1) as usize
+    let usable = (width - 2 * left).max(1);
+    let char_w = FrameBuffer::text_width("W", scale, Font::Bitmap).max(1);
+    (usable / char_w).max(1) as usize
 }
 
-/// Split `text` (uppercased for the bitmap font) into lines no wider than
-/// `max_chars`, breaking on spaces where possible and hard-splitting any
-/// single run that is longer than a line (e.g. a long filesystem path).
+/// Split `text` into lines no wider than `max_chars`, breaking on spaces
+/// where possible and hard-splitting any single run that is longer than a
+/// line (e.g. a long filesystem path).
 fn wrap(text: &str, max_chars: usize) -> Vec<String> {
-    let upper = text.to_uppercase();
     let mut lines = Vec::new();
-    for word in upper.split_whitespace() {
+    for word in text.split_whitespace() {
         let mut word = word;
         // Hard-split words longer than a whole line (paths, tokens).
         while word.chars().count() > max_chars {
@@ -369,7 +384,7 @@ mod tests {
         assert!(lines.iter().all(|line| line.chars().count() <= 20));
         // ...and no character of the path is lost to truncation.
         let rejoined: String = lines.join("").replace(' ', "");
-        assert_eq!(rejoined, path.to_uppercase().replace(' ', ""));
+        assert_eq!(rejoined, path.replace(' ', ""));
         assert!(lines.len() > 1);
     }
 

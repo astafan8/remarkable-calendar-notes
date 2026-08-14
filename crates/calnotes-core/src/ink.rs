@@ -42,13 +42,12 @@ pub struct DayNotes {
     pub strokes: Vec<Stroke>,
 }
 
-/// The full ink store: every date that has at least one stroke, plus an
-/// in-memory undo stack (last-removed stroke per date, not persisted).
+/// The full ink store: every date that has at least one stroke, plus the
+/// in-memory removed-strokes stack (not persisted) that powers Undo of an
+/// erase/lasso/clear.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct InkStore {
     pub days: BTreeMap<NaiveDate, DayNotes>,
-    #[serde(skip)]
-    undo_stack: BTreeMap<NaiveDate, Vec<Stroke>>,
     #[serde(skip)]
     removed_stack: BTreeMap<NaiveDate, Vec<Vec<Stroke>>>,
 }
@@ -112,29 +111,15 @@ impl InkStore {
             }
         }
         if let Some(day) = self.days.get_mut(&date) {
-            if let Some(stroke) = day.strokes.pop() {
-                self.undo_stack.entry(date).or_default().push(stroke);
+            if day.strokes.pop().is_some() {
                 return true;
             }
         }
         false
     }
 
-    /// Redo the last undone stroke on `date`, if any.
-    pub fn redo(&mut self, date: NaiveDate) -> bool {
-        if let Some(stack) = self.undo_stack.get_mut(&date) {
-            if let Some(stroke) = stack.pop() {
-                self.days.entry(date).or_default().strokes.push(stroke);
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Clear all ink for a single date. This is destructive and not part of
-    /// the undo stack (matches the "clear day" control's intent as a hard
-    /// reset), but the cleared strokes are kept for one `redo` as a safety
-    /// net against an accidental tap.
+    /// Clear all ink for a single date. Undoable via the removed-strokes
+    /// stack (so an accidental Clear tap can be reversed).
     pub fn clear_day(&mut self, date: NaiveDate) {
         if let Some(day) = self.days.remove(&date) {
             if !day.strokes.is_empty() {
@@ -296,7 +281,7 @@ mod tests {
     }
 
     #[test]
-    fn undo_removes_last_stroke_and_redo_restores_it() {
+    fn undo_removes_last_stroke() {
         let mut store = InkStore::new();
         let idx = store.begin_stroke(d(2));
         store.push_point(
@@ -320,8 +305,8 @@ mod tests {
         assert_eq!(store.strokes_for(d(2)).len(), 1);
         assert!(store.undo(d(2)));
         assert_eq!(store.strokes_for(d(2)).len(), 0);
-        assert!(store.redo(d(2)));
-        assert_eq!(store.strokes_for(d(2)).len(), 1);
+        // Nothing left to undo.
+        assert!(!store.undo(d(2)));
     }
 
     #[test]
