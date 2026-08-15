@@ -147,7 +147,7 @@ jobs:
 
       - name: Upload ARM QTFB screenshot and logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: qtfb-arm-device-mode-screenshot
           if-no-files-found: warn
@@ -210,7 +210,7 @@ jobs:
 
       - name: Upload static musl screenshot and logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: qtfb-musl-static-screenshot
           if-no-files-found: warn
