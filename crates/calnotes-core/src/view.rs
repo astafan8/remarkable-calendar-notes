@@ -32,24 +32,59 @@ fn week_start(date: NaiveDate) -> NaiveDate {
 
 /// Lay out `view` anchored at `anchor` within a `canvas_w`x`canvas_h` pixel
 /// area. Returns one [`DateCell`] per grid cell, row-major.
-pub fn layout(view: ViewMode, anchor: NaiveDate, canvas_w: i32, canvas_h: i32) -> Vec<DateCell> {
+///
+/// `aspect` is the target day-cell aspect ratio (width : height). Every
+/// view **except Two Months** sizes its day cells to this single ratio, so
+/// a handwritten note keeps its shape when you switch between Day, Week,
+/// Work Week, Two Weeks, and Month. Because the cells are a fixed shape,
+/// some views leave unused space at the bottom (or right) of the canvas
+/// rather than stretching cells to fill it. Two Months is the one exception
+/// — it keeps filling its grid, so its cells are a slightly different shape.
+pub fn layout(
+    view: ViewMode,
+    anchor: NaiveDate,
+    canvas_w: i32,
+    canvas_h: i32,
+    aspect: CellAspect,
+) -> Vec<DateCell> {
     match view {
-        ViewMode::Day => vec![DateCell {
-            date: anchor,
-            rect: Rect {
-                x: 0,
-                y: 0,
-                w: canvas_w,
-                h: canvas_h,
-            },
-            in_focus_period: true,
-        }],
-        ViewMode::Week => weekday_split(week_start(anchor), 1, canvas_w, canvas_h),
-        ViewMode::WorkWeek => work_week_row(week_start(anchor), canvas_w, canvas_h),
-        ViewMode::TwoWeeks => weekday_split(week_start(anchor), 2, canvas_w, canvas_h),
+        ViewMode::Day => {
+            let (w, h) = fit_cell(canvas_w, canvas_h, 1, 1, aspect);
+            vec![DateCell {
+                date: anchor,
+                rect: Rect { x: 0, y: 0, w, h },
+                in_focus_period: true,
+            }]
+        }
+        ViewMode::Week => weekday_split(week_start(anchor), 1, canvas_w, canvas_h, aspect),
+        ViewMode::WorkWeek => work_week_row(week_start(anchor), canvas_w, canvas_h, aspect),
+        ViewMode::TwoWeeks => weekday_split(week_start(anchor), 2, canvas_w, canvas_h, aspect),
         ViewMode::Month => month_grid(anchor, canvas_w, canvas_h),
         ViewMode::TwoMonths => two_month_grid(anchor, canvas_w, canvas_h),
     }
+}
+
+/// A target day-cell aspect ratio, width : height. The reference is a single
+/// Month-view cell (see [`layout`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CellAspect {
+    pub w: i32,
+    pub h: i32,
+}
+
+/// The largest cell size with `aspect`'s width:height ratio that fits a
+/// `cols` x `rows` grid inside `avail_w` x `avail_h`. The cell is limited by
+/// whichever of width or height binds first, so cells are never stretched
+/// and the grid simply leaves the leftover space unused.
+fn fit_cell(avail_w: i32, avail_h: i32, cols: i32, rows: i32, aspect: CellAspect) -> (i32, i32) {
+    let aw = aspect.w.max(1);
+    let ah = aspect.h.max(1);
+    let width_limited = (avail_w / cols).max(1);
+    // The widest cell whose aspect-implied height still fits one row.
+    let height_limited = ((avail_h / rows) * aw / ah).max(1);
+    let cell_w = width_limited.min(height_limited).max(1);
+    let cell_h = (cell_w * ah / aw).max(1);
+    (cell_w, cell_h)
 }
 
 /// Two consecutive months shown as one **continuous** calendar: weeks flow
@@ -114,27 +149,27 @@ fn last_of_month(date: NaiveDate) -> NaiveDate {
 /// week-style views, so every day cell is the same width.
 const WORK_COLS: i32 = 5;
 
-/// A single row of the five working days (Mon–Fri), each `canvas_w / 5`
-/// wide, filling the whole height. This is the Work Week view.
-fn work_week_row(start: NaiveDate, canvas_w: i32, canvas_h: i32) -> Vec<DateCell> {
-    let col_w = canvas_w / WORK_COLS;
+/// A single row of the five working days (Mon–Fri), each sized to the target
+/// cell aspect ratio and left-aligned. This is the Work Week view; any space
+/// to the right of Friday and below the row is left unused so the cell keeps
+/// the same shape as in every other view.
+fn work_week_row(
+    start: NaiveDate,
+    canvas_w: i32,
+    canvas_h: i32,
+    aspect: CellAspect,
+) -> Vec<DateCell> {
+    let (cell_w, cell_h) = fit_cell(canvas_w, canvas_h, WORK_COLS, 1, aspect);
     (0..WORK_COLS)
-        .map(|col| {
-            let w = if col == WORK_COLS - 1 {
-                canvas_w - col_w * (WORK_COLS - 1)
-            } else {
-                col_w
-            };
-            DateCell {
-                date: start + Duration::days(col as i64),
-                rect: Rect {
-                    x: col_w * col,
-                    y: 0,
-                    w,
-                    h: canvas_h,
-                },
-                in_focus_period: true,
-            }
+        .map(|col| DateCell {
+            date: start + Duration::days(col as i64),
+            rect: Rect {
+                x: cell_w * col,
+                y: 0,
+                w: cell_w,
+                h: cell_h,
+            },
+            in_focus_period: true,
         })
         .collect()
 }
@@ -142,55 +177,45 @@ fn work_week_row(start: NaiveDate, canvas_w: i32, canvas_h: i32) -> Vec<DateCell
 /// `weeks` consecutive weeks starting Monday `start`, each split across two
 /// rows: the five working days on top and the two weekend days below,
 /// **left-aligned** (Saturday and Sunday in the first two columns, not
-/// centred). Every cell is `canvas_w / 5` wide so days never look stretched
-/// relative to one another.
-fn weekday_split(start: NaiveDate, weeks: i32, canvas_w: i32, canvas_h: i32) -> Vec<DateCell> {
+/// centred). Every cell is sized to the target aspect ratio, so days keep
+/// the same shape as in every other view; leftover space below the last row
+/// is left unused rather than stretching the cells.
+fn weekday_split(
+    start: NaiveDate,
+    weeks: i32,
+    canvas_w: i32,
+    canvas_h: i32,
+    aspect: CellAspect,
+) -> Vec<DateCell> {
     let rows = weeks * 2;
-    let col_w = canvas_w / WORK_COLS;
-    let base_h = canvas_h / rows;
-    let row_h = |row: i32| {
-        if row == rows - 1 {
-            canvas_h - base_h * (rows - 1)
-        } else {
-            base_h
-        }
-    };
+    let (cell_w, cell_h) = fit_cell(canvas_w, canvas_h, WORK_COLS, rows, aspect);
     let mut cells = Vec::with_capacity((weeks * 7) as usize);
     for week in 0..weeks {
         let week_start = start + Duration::days((week * 7) as i64);
-        // Working days: five cells tiling the full width.
-        let work_row = week * 2;
-        let wy = base_h * work_row;
-        let wh = row_h(work_row);
+        // Working days: five cells across the top row.
+        let wy = cell_h * (week * 2);
         for col in 0..WORK_COLS {
-            let w = if col == WORK_COLS - 1 {
-                canvas_w - col_w * (WORK_COLS - 1)
-            } else {
-                col_w
-            };
             cells.push(DateCell {
                 date: week_start + Duration::days(col as i64),
                 rect: Rect {
-                    x: col_w * col,
+                    x: cell_w * col,
                     y: wy,
-                    w,
-                    h: wh,
+                    w: cell_w,
+                    h: cell_h,
                 },
                 in_focus_period: true,
             });
         }
-        // Weekend days: two cells, left-aligned, same width as a working day.
-        let weekend_row = week * 2 + 1;
-        let ey = base_h * weekend_row;
-        let eh = row_h(weekend_row);
+        // Weekend days: two cells, left-aligned, same size as a working day.
+        let ey = cell_h * (week * 2 + 1);
         for col in 0..2 {
             cells.push(DateCell {
                 date: week_start + Duration::days((WORK_COLS + col) as i64),
                 rect: Rect {
-                    x: col_w * col,
+                    x: cell_w * col,
                     y: ey,
-                    w: col_w,
-                    h: eh,
+                    w: cell_w,
+                    h: cell_h,
                 },
                 in_focus_period: true,
             });
@@ -372,73 +397,81 @@ mod tests {
         NaiveDate::from_ymd_opt(y, m, day).unwrap()
     }
 
+    /// A representative target aspect (a real Month cell is ~190x264).
+    const A: CellAspect = CellAspect { w: 190, h: 264 };
+
     #[test]
-    fn day_view_is_a_single_full_canvas_cell() {
-        let cells = layout(ViewMode::Day, d(2026, 3, 15), 1404, 1872);
+    fn day_view_is_a_single_cell_sized_to_the_target_aspect() {
+        let cells = layout(ViewMode::Day, d(2026, 3, 15), 1404, 1872, A);
         assert_eq!(cells.len(), 1);
-        assert_eq!(
-            cells[0].rect,
-            Rect {
-                x: 0,
-                y: 0,
-                w: 1404,
-                h: 1872
-            }
-        );
+        let r = cells[0].rect;
+        // Top-left anchored, not stretched to fill the canvas.
+        assert_eq!((r.x, r.y), (0, 0));
+        assert!(r.w <= 1404 && r.h <= 1872);
+        // Sized to the shared aspect ratio.
+        assert_eq!(r.w * A.h / A.w, r.h);
     }
 
     #[test]
-    fn week_view_has_seven_cells_starting_monday_in_a_compact_grid() {
+    fn week_view_has_seven_equal_cells_left_aligned_in_two_row_bands() {
         // 2026-03-18 is a Wednesday.
-        let cells = layout(ViewMode::Week, d(2026, 3, 18), 1400, 200);
+        let cells = layout(ViewMode::Week, d(2026, 3, 18), 1400, 200, A);
         assert_eq!(cells.len(), 7);
         assert_eq!(cells[0].date, d(2026, 3, 16)); // Monday
         assert_eq!(cells[6].date, d(2026, 3, 22)); // Sunday
-                                                   // Row 1: the five working days, full width in five equal columns.
+        let (cw, ch) = (cells[0].rect.w, cells[0].rect.h);
+        // Every day cell is identical in size and shares the target aspect.
+        for c in &cells {
+            assert_eq!((c.rect.w, c.rect.h), (cw, ch));
+        }
+        assert_eq!(cw * A.h / A.w, ch);
+        // Row 1: the five working days, left-aligned across the top.
         for (i, cell) in cells[..5].iter().enumerate() {
             assert_eq!(cell.rect.y, 0);
-            assert_eq!(cell.rect.x, i as i32 * (1400 / 5));
+            assert_eq!(cell.rect.x, i as i32 * cw);
         }
-        // Row 2: Saturday and Sunday, left-aligned in the first two columns.
+        // Row 2: Saturday and Sunday, left-aligned on the next band.
         assert_eq!(cells[5].date.weekday(), Weekday::Sat);
         assert_eq!(cells[6].date.weekday(), Weekday::Sun);
-        assert_eq!(cells[5].rect.y, 100);
+        assert_eq!(cells[5].rect.y, ch);
         assert_eq!(cells[5].rect.x, 0);
-        assert_eq!(cells[6].rect.x, 1400 / 5);
-        assert_eq!(cells[6].rect.w, 1400 / 5); // not stretched to fill width
+        assert_eq!(cells[6].rect.x, cw);
     }
 
     #[test]
-    fn work_week_view_has_five_cells_monday_to_friday_in_one_row() {
-        let cells = layout(ViewMode::WorkWeek, d(2026, 3, 18), 1400, 200);
+    fn work_week_view_has_five_equal_cells_monday_to_friday_in_one_row() {
+        let cells = layout(ViewMode::WorkWeek, d(2026, 3, 18), 1400, 200, A);
         assert_eq!(cells.len(), 5);
         assert_eq!(cells[4].date.weekday(), Weekday::Fri);
-        // All five are on a single full-height row.
-        for cell in &cells {
+        let (cw, ch) = (cells[0].rect.w, cells[0].rect.h);
+        for (i, cell) in cells.iter().enumerate() {
             assert_eq!(cell.rect.y, 0);
-            assert_eq!(cell.rect.h, 200);
+            assert_eq!((cell.rect.w, cell.rect.h), (cw, ch));
+            assert_eq!(cell.rect.x, i as i32 * cw);
         }
+        assert_eq!(cw * A.h / A.w, ch);
     }
 
     #[test]
     fn two_weeks_view_is_four_rows_of_working_days_then_weekend() {
-        let cells = layout(ViewMode::TwoWeeks, d(2026, 3, 18), 1400, 400);
+        let cells = layout(ViewMode::TwoWeeks, d(2026, 3, 18), 1400, 400, A);
         assert_eq!(cells.len(), 14);
-        // Week 1 working days (row 0), weekend (row 1); week 2 working (row
-        // 2), weekend (row 3). Row height 100.
+        let ch = cells[0].rect.h;
+        // Week 1 working days (band 0), weekend (band 1); week 2 working
+        // (band 2), weekend (band 3).
         assert_eq!(cells[0].rect.y, 0); // Mon w1
         assert_eq!(cells[4].date.weekday(), Weekday::Fri);
-        assert_eq!(cells[5].rect.y, 100); // Sat w1 (weekend row)
+        assert_eq!(cells[5].rect.y, ch); // Sat w1 (weekend band)
         assert_eq!(cells[5].rect.x, 0); // left-aligned
-        assert_eq!(cells[7].rect.y, 200); // Mon w2
-        assert_eq!(cells[12].rect.y, 300); // Sat w2
+        assert_eq!(cells[7].rect.y, 2 * ch); // Mon w2
+        assert_eq!(cells[12].rect.y, 3 * ch); // Sat w2
         assert_eq!(cells[12].rect.x, 0);
         assert_eq!(cells[13].date, cells[0].date + Duration::days(13));
     }
 
     #[test]
     fn month_view_is_a_6x7_grid_covering_the_whole_month() {
-        let cells = layout(ViewMode::Month, d(2026, 3, 15), 1400, 1800);
+        let cells = layout(ViewMode::Month, d(2026, 3, 15), 1400, 1800, A);
         assert_eq!(cells.len(), 42);
         let in_focus: Vec<_> = cells.iter().filter(|c| c.in_focus_period).collect();
         assert_eq!(in_focus.len(), 31); // March has 31 days
@@ -450,14 +483,14 @@ mod tests {
     fn month_view_march_2026_starts_on_a_sunday_so_grid_leads_with_february() {
         // March 1, 2026 is a Sunday, so the grid's first cell is the Monday
         // of the prior week (Feb 23).
-        let cells = layout(ViewMode::Month, d(2026, 3, 15), 700, 600);
+        let cells = layout(ViewMode::Month, d(2026, 3, 15), 700, 600, A);
         assert_eq!(cells[0].date, d(2026, 2, 23));
         assert!(!cells[0].in_focus_period);
     }
 
     #[test]
     fn two_months_view_flows_continuously_without_duplicating_the_border_week() {
-        let cells = layout(ViewMode::TwoMonths, d(2026, 3, 15), 1400, 1800);
+        let cells = layout(ViewMode::TwoMonths, d(2026, 3, 15), 1400, 1800, A);
         // One continuous grid: every cell is the day after the previous, so
         // the March/April border week is never repeated.
         for pair in cells.windows(2) {
@@ -486,16 +519,20 @@ mod tests {
 
     #[test]
     fn cell_at_finds_the_containing_cell_and_normalizes_a_point_within_it() {
-        let cells = layout(ViewMode::Week, d(2026, 3, 18), 1400, 200);
-        // A point inside Monday's cell and within its centred writing area.
-        let cell = cell_at(&cells, 140, 50).unwrap();
+        let cells = layout(ViewMode::Week, d(2026, 3, 18), 1400, 200, A);
+        // A point inside Monday's cell (top-left cell of the working row).
+        let monday = &cells[0];
+        assert_eq!(monday.date, d(2026, 3, 16));
+        let px = monday.rect.x + monday.rect.w / 2;
+        let py = monday.rect.y + monday.rect.h / 2;
+        let cell = cell_at(&cells, px, py).unwrap();
         assert_eq!(cell.date, d(2026, 3, 16));
-        let (nx, ny) = normalize_within(cell.rect, 140, 50);
+        let (nx, ny) = normalize_within(cell.rect, px, py);
         assert!((0.0..=1.0).contains(&nx));
         assert!((0.0..=1.0).contains(&ny));
-        let (px, py) = denormalize_within(cell.rect, nx, ny);
-        assert!((px - 140).abs() <= 1);
-        assert!((py - 50).abs() <= 1);
+        let (rx, ry) = denormalize_within(cell.rect, nx, ny);
+        assert!((rx - px).abs() <= 1);
+        assert!((ry - py).abs() <= 1);
     }
 
     #[test]
@@ -527,7 +564,7 @@ mod tests {
     fn window_for_month_matches_the_layout_grid_span() {
         let anchor = d(2026, 3, 15);
         let window = window_for(ViewMode::Month, anchor);
-        let cells = layout(ViewMode::Month, anchor, 700, 600);
+        let cells = layout(ViewMode::Month, anchor, 700, 600, A);
         assert_eq!(window.start, cells[0].date);
         assert_eq!(window.end, cells[41].date + Duration::days(1));
     }

@@ -109,6 +109,10 @@ Deterministically regenerates `assets/icon.png` from code (see
    Vellum requires the repository owner—not an automation operator—to
    inspect that branch and personally open and describe the pull request.
 
+For the full step-by-step Vellum publishing walkthrough (for installs via
+the **reManager** app or `vellum add`), see
+[`PUBLISHING-VELLUM.md`](PUBLISHING-VELLUM.md).
+
 The sidebar QMD is derived from rm-appload's GPL-3.0-only patch, lives
 under `sidebar/`, and is separately GPL-3.0-only. It must be re-authored
 and tested against a real device-generated QMLDiff hashtab before widening
