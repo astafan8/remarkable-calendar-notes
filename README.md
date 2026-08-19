@@ -82,9 +82,11 @@ inside the release zip's `diagnostics/` folder. See
 The source is now public, but `vellum add remarkable-calendar-notes` is
 still not available until the repository owner personally reviews and
 submits the packages and Vellum's maintainers accept them. Manual release
-installation remains the current path. The sidebar companion is
-firmware-pinned and has additional recovery steps because it patches
-xochitl QML; see [docs/INSTALL.md](docs/INSTALL.md) and
+installation remains the current path. The exact steps to publish it to
+Vellum (for one-tap installs from the **reManager** app) are in
+[docs/PUBLISHING-VELLUM.md](docs/PUBLISHING-VELLUM.md). The sidebar
+companion is firmware-pinned and has additional recovery steps because it
+patches xochitl QML; see [docs/INSTALL.md](docs/INSTALL.md) and
 [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 
 ## In-app setup

@@ -33,6 +33,25 @@ it:**
   simple — a Bresenham line with a square brush, no anti-aliasing, no
   blending — specifically to keep the per-sample cost low and
   predictable.
+- A pen sample does **zero** per-sample layout work: the cell it writes
+  in is resolved once at pen-down and cached on the active gesture, so
+  `App::pen_move` never rebuilds the grid or searches cells — it only
+  normalizes the point, records it, and returns one segment.
+- The device event loop polls the QTFB socket **adaptively**: roughly
+  every 2 ms while a pen or finger is on the glass (or a burst of events
+  just arrived), falling back to ~60 Hz when idle to spare the battery.
+
+**Why the first arc of a fast letter used to look straight.** QTFB does
+not forward every digitizer sample; it coalesces (and can drop) pen moves
+between reads, more so under load. If the socket is only drained every
+~16 ms, the first move after contact can already be a long way from where
+the pen touched down, so the first drawn segment is one long straight line
+before the curve catches up. Draining the socket every ~2 ms while writing
+gives QTFB far less time to coalesce, so many more of the pen's
+high-frequency points survive and curves keep their shape from the very
+start. We cannot exceed what QTFB delivers — an AppLoad app has no direct
+access to the Wacom `/dev/input` digitizer — but polling aggressively
+captures as much of it as the platform allows.
 
 Even with all of that, expect visibly more latency than xochitl's own
 handwriting, especially during fast strokes. This is a platform ceiling,

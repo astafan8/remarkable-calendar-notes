@@ -115,16 +115,19 @@ pub enum InkTool {
 enum ActiveGesture {
     Draw {
         date: NaiveDate,
+        rect: view::Rect,
         stroke_index: usize,
         last_drawn: (i32, i32),
     },
     Erase {
         date: NaiveDate,
+        rect: view::Rect,
         points: Vec<NormPoint>,
         last_drawn: (i32, i32),
     },
     Lasso {
         date: NaiveDate,
+        rect: view::Rect,
         points: Vec<NormPoint>,
         last_drawn: (i32, i32),
     },
@@ -224,6 +227,11 @@ pub struct App {
     /// shown wrapped under the editor's TEST button so long error messages
     /// are fully readable. Cleared whenever the editor opens or closes.
     editor_test_result: Option<String>,
+    /// The id of the source whose per-row **TEST** button was last pressed
+    /// and whose test is still running. Shown as a "TESTING…" line on that
+    /// row so the button press is always visibly acknowledged, even when
+    /// the eventual result is unchanged. Cleared when the result arrives.
+    testing_source_id: Option<String>,
     pub google_login: Option<GoogleLogin>,
     /// Dates edited (drawn/erased/lasso'd/cleared) in order, so Undo can
     /// reverse the user's actual last action regardless of which cell it
@@ -263,6 +271,7 @@ impl App {
             refresh_rx: None,
             editor_test_rx: None,
             editor_test_result: None,
+            testing_source_id: None,
             google_login: None,
             edit_history: Vec::new(),
         })
@@ -368,6 +377,7 @@ impl App {
             });
         });
         self.refresh_rx = Some(rx);
+        self.testing_source_id = Some(source_id.to_string());
         self.status = format!("TESTING {}...", label.to_uppercase());
     }
 
@@ -422,6 +432,7 @@ impl App {
     fn apply_refresh(&mut self, outcome: RefreshOutcome) {
         // Whatever produced this result, no refresh is outstanding now.
         self.refresh_rx = None;
+        self.testing_source_id = None;
         let mut ok = 0usize;
         let mut failed = 0usize;
         for updated in &outcome.sources {
@@ -479,6 +490,7 @@ impl App {
                 Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Disconnected) => {
                     self.refresh_rx = None;
+                    self.testing_source_id = None;
                     self.status = "REFRESH FAILED".to_string();
                     changed = true;
                 }
@@ -709,6 +721,16 @@ impl App {
         let _ = self.state.save_ink();
     }
 
+    /// The reference day-cell aspect ratio shared by every view except Two
+    /// Months: a single Month-view cell (7 columns x 6 rows over the writing
+    /// area, i.e. the screen minus the toolbar and the month-label gutter).
+    fn cell_aspect() -> view::CellAspect {
+        view::CellAspect {
+            w: (CANVAS_W - MONTH_LABEL_W) / 7,
+            h: (CANVAS_H - TOOLBAR_H) / 6,
+        }
+    }
+
     fn grid_cells(&self) -> Vec<view::DateCell> {
         let month_gutter = if matches!(
             self.state.config.view_mode,
@@ -723,6 +745,7 @@ impl App {
             self.state.config.anchor_date,
             CANVAS_W - month_gutter,
             CANVAS_H - TOOLBAR_H,
+            Self::cell_aspect(),
         )
         .into_iter()
         .map(|mut c| {
@@ -977,17 +1000,20 @@ impl App {
                 self.state.ink.push_point(date, stroke_index, point);
                 ActiveGesture::Draw {
                     date,
+                    rect,
                     stroke_index,
                     last_drawn,
                 }
             }
             InkTool::Erase => ActiveGesture::Erase {
                 date,
+                rect,
                 points: vec![point],
                 last_drawn,
             },
             InkTool::Lasso => ActiveGesture::Lasso {
                 date,
+                rect,
                 points: vec![point],
                 last_drawn,
             },
@@ -1000,31 +1026,40 @@ impl App {
     /// framebuffer it already holds and refreshes only its dirty rect —
     /// no full re-render, no full-frame copy, per pen sample.
     pub fn pen_move(&mut self, x: i32, y: i32, pressure: f32) -> Option<PenSegment> {
-        let (date, px0, py0) = match self.active_gesture.as_ref()? {
+        // A stroke stays bound to the cell it started in — its `rect` is
+        // captured once at pen-down, so a pen sample does no per-sample
+        // layout work (no grid rebuild, no cell search): just normalize,
+        // record, and emit one segment. This keeps the hot path allocation-
+        // and compute-free so samples are consumed as fast as they arrive.
+        let gesture = self.active_gesture.as_mut()?;
+        let (date, rect, last_drawn, gray, thickness, dashed) = match gesture {
             ActiveGesture::Draw {
-                date, last_drawn, ..
-            }
-            | ActiveGesture::Lasso {
-                date, last_drawn, ..
-            }
-            | ActiveGesture::Erase {
-                date, last_drawn, ..
-            } => (*date, last_drawn.0, last_drawn.1),
+                date,
+                rect,
+                last_drawn,
+                ..
+            } => (*date, *rect, last_drawn, BLACK, INK_THICKNESS, false),
+            ActiveGesture::Erase {
+                date,
+                rect,
+                last_drawn,
+                ..
+            } => (
+                *date,
+                *rect,
+                last_drawn,
+                LIGHT_GRAY,
+                ERASER_FEEDBACK_THICKNESS,
+                false,
+            ),
+            ActiveGesture::Lasso {
+                date,
+                rect,
+                last_drawn,
+                ..
+            } => (*date, *rect, last_drawn, GRAY, INK_THICKNESS, true),
         };
-        let cells = self.grid_cells();
-        // A stroke stays bound to the cell it started in even if the pen
-        // drifts slightly over a cell boundary, so a single mark never
-        // silently splits across two dates.
-        let rect = cells
-            .iter()
-            .find(|c| c.date == date)
-            .map(|c| c.rect)
-            .unwrap_or(view::Rect {
-                x: 0,
-                y: 0,
-                w: CANVAS_W,
-                h: CANVAS_H,
-            });
+        let (px0, py0) = *last_drawn;
         let (nx, ny) = view::normalize_within(rect, x, y);
         let point = NormPoint {
             x: nx,
@@ -1032,36 +1067,18 @@ impl App {
             pressure,
         };
         let (px1, py1) = view::denormalize_within(rect, nx, ny);
-        // Each tool produces the same incremental line, but styled so the
-        // user can tell them apart: solid black ink for the pen, a faint
-        // solid trail for the eraser, and a dashed grey outline for the
-        // lasso. Only the pen's marks are persisted; the eraser/lasso
-        // feedback is wiped by the full redraw on pen-up.
-        let (gray, thickness, dashed) = match self.active_gesture.as_ref()? {
-            ActiveGesture::Draw { .. } => (BLACK, INK_THICKNESS, false),
-            ActiveGesture::Erase { .. } => (LIGHT_GRAY, ERASER_FEEDBACK_THICKNESS, false),
-            ActiveGesture::Lasso { .. } => (GRAY, INK_THICKNESS, true),
-        };
-        match self.active_gesture.as_mut()? {
-            ActiveGesture::Draw {
-                stroke_index,
-                last_drawn,
-                ..
-            } => {
+        *last_drawn = (px1, py1);
+        // Each tool produces the same incremental line, styled so the user
+        // can tell them apart: solid black ink for the pen, a faint solid
+        // trail for the eraser, and a dashed grey outline for the lasso.
+        // Only the pen's marks are persisted; the eraser/lasso feedback is
+        // wiped by the full redraw on pen-up.
+        match gesture {
+            ActiveGesture::Draw { stroke_index, .. } => {
                 self.state.ink.push_point(date, *stroke_index, point);
-                *last_drawn = (px1, py1);
             }
-            ActiveGesture::Erase {
-                points, last_drawn, ..
-            } => {
+            ActiveGesture::Erase { points, .. } | ActiveGesture::Lasso { points, .. } => {
                 points.push(point);
-                *last_drawn = (px1, py1);
-            }
-            ActiveGesture::Lasso {
-                points, last_drawn, ..
-            } => {
-                points.push(point);
-                *last_drawn = (px1, py1);
             }
         }
         Some(PenSegment {
@@ -1177,7 +1194,7 @@ impl App {
             ViewMode::Month => {
                 draw_vertical_text(
                     fb,
-                    8,
+                    MONTH_LABEL_W / 2,
                     TOOLBAR_H + (CANVAS_H - TOOLBAR_H) / 2,
                     &self
                         .state
@@ -1198,7 +1215,7 @@ impl App {
                     if let Some(center_y) = month_center_y(&cells, month.year(), month.month()) {
                         draw_vertical_text(
                             fb,
-                            8,
+                            MONTH_LABEL_W / 2,
                             center_y,
                             &month.format("%B").to_string().to_uppercase(),
                             MONTH_LABEL_SCALE,
@@ -1642,20 +1659,38 @@ impl App {
 
         for row in &layout.source_rows {
             let source = &self.state.config.sources[row.index];
-            let status = status_label(&source.last_status);
-            let label = fit_text(
-                &format!("{} {}", source.label, status),
-                row.edit.w - 12,
-                BODY_TEXT_SCALE,
-                Font::Ui,
-            );
             fb.draw_rect_outline(row.edit, BLACK);
+            // Line 1: the source label on its own, so it is always legible
+            // and never runs into the status text.
+            let label = fit_text(&source.label, row.edit.w - 16, BODY_TEXT_SCALE, Font::Ui);
             fb.draw_text(
                 row.edit.x + 8,
-                row.edit.y + 34,
+                row.edit.y + 12,
                 &label,
                 BLACK,
                 BODY_TEXT_SCALE,
+                Font::Ui,
+            );
+            // Line 2: the status/result on its own line in a smaller font.
+            // While this row's TEST is running it shows "TESTING…" so the
+            // button press is always visibly acknowledged, even if the
+            // eventual OK/ERROR is identical to before.
+            let is_testing = self
+                .testing_source_id
+                .as_deref()
+                .is_some_and(|id| id == source.id);
+            let status = if is_testing {
+                "TESTING…".to_string()
+            } else {
+                status_label(&source.last_status)
+            };
+            let status = fit_text(&status, row.edit.w - 16, EVENT_TEXT_SCALE, Font::Ui);
+            fb.draw_text(
+                row.edit.x + 8,
+                row.edit.y + 52,
+                &status,
+                if is_testing { BLACK } else { GRAY },
+                EVENT_TEXT_SCALE,
                 Font::Ui,
             );
             if let Some(login) = row.login {
@@ -1940,12 +1975,16 @@ pub(crate) fn normalize_https_url(raw: &str) -> String {
 
 /// The month-name label down the calendar's left gutter, in the embedded
 /// JetBrains Mono [`Font::Ui`] to match the rest of the calendar chrome.
-fn draw_vertical_text(fb: &mut FrameBuffer, x: i32, center_y: i32, text: &str, scale: i32) {
+/// The column of glyphs is horizontally centred on `center_x` (the middle
+/// of the gutter), not left-aligned against the screen edge.
+fn draw_vertical_text(fb: &mut FrameBuffer, center_x: i32, center_y: i32, text: &str, scale: i32) {
     let line = FrameBuffer::text_height(scale, Font::Ui);
     let height = text.chars().count() as i32 * line;
     let mut y = center_y - height / 2;
     for character in text.chars() {
-        fb.draw_text(x, y, &character.to_string(), BLACK, scale, Font::Ui);
+        let glyph = character.to_string();
+        let glyph_w = FrameBuffer::text_width(&glyph, scale, Font::Ui);
+        fb.draw_text(center_x - glyph_w / 2, y, &glyph, BLACK, scale, Font::Ui);
         y += line;
     }
 }
@@ -2641,6 +2680,50 @@ mod tests {
             message: message.to_string(),
         };
         assert!(full_status_text(&status).contains(message));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn pressing_a_source_row_test_marks_that_row_as_testing() {
+        with_temp_data_dir(|| {
+            let mut app = App::new().unwrap();
+            app.screen = Screen::Settings;
+
+            // Add a local .ics source and save it.
+            let layout = app.settings_layout();
+            let (_, add) = layout.add_buttons[0];
+            app.handle_touch_tap(add.x + 2, add.y + 2);
+            for c in "home".chars() {
+                app.handle_vkb(c as i32);
+            }
+            app.editor.as_mut().unwrap().handle_key(VkbKey::Tab);
+            for c in "/tmp/home.ics".chars() {
+                app.handle_vkb(c as i32);
+            }
+            let layout = app.settings_layout();
+            let save = layout.save_button.unwrap();
+            app.handle_touch_tap(save.x + 2, save.y + 2);
+            assert_eq!(app.state.config.sources.len(), 1);
+            let id = app.state.config.sources[0].id.clone();
+
+            // Press the per-row TEST button; the row is immediately marked
+            // as testing so the press is visibly acknowledged, before the
+            // background worker returns.
+            let layout = app.settings_layout();
+            let test = layout.source_rows[0].test;
+            app.handle_touch_tap(test.x + 2, test.y + 2);
+            assert_eq!(app.testing_source_id.as_deref(), Some(id.as_str()));
+
+            // Once the worker's result is applied, the indicator clears.
+            for _ in 0..300 {
+                app.poll_background();
+                if app.testing_source_id.is_none() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert!(app.testing_source_id.is_none());
+        });
     }
 
     #[test]

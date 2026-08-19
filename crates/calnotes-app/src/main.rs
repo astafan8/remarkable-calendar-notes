@@ -363,8 +363,10 @@ mod device_loop {
         let mut touch: Option<TouchTrack> = None;
 
         loop {
+            let had_events;
             match sink.0.poll_events() {
                 Ok(events) => {
+                    had_events = !events.is_empty();
                     let mut needs_full_redraw = false;
                     for ev in events {
                         match ev.kind {
@@ -518,7 +520,21 @@ mod device_loop {
                 next_startup_repaint += STARTUP_REPAINT_INTERVAL;
             }
 
-            std::thread::sleep(Duration::from_millis(16));
+            // QTFB coalesces/drops pen samples between reads, so how often
+            // we drain the socket sets how much of the pen's high-rate
+            // motion we actually capture. While a pen or finger is on the
+            // glass — or we just consumed a burst of events — poll almost
+            // continuously so strokes (including the very first arc of a
+            // letter) keep their shape and feel responsive. When idle, fall
+            // back to a calm ~60 Hz to spare the battery.
+            let input_active = pen_down || touch.is_some() || had_events;
+            let idle_sleep = Duration::from_millis(16);
+            let active_sleep = Duration::from_millis(2);
+            std::thread::sleep(if input_active {
+                active_sleep
+            } else {
+                idle_sleep
+            });
         }
     }
 
