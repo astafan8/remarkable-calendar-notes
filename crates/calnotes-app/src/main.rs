@@ -363,7 +363,7 @@ mod device_loop {
         let mut touch: Option<TouchTrack> = None;
 
         loop {
-            let mut had_events = false;
+            let had_events;
             match sink.0.poll_events() {
                 Ok(events) => {
                     had_events = !events.is_empty();
