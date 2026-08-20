@@ -145,10 +145,13 @@ pub enum ViewMode {
 }
 
 impl ViewMode {
+    /// Every view, in the app's default button order (Day, Work Week, Week,
+    /// Two Weeks, Month, Two Months). Also the order shown in the settings
+    /// view picker.
     pub const ALL: [ViewMode; 6] = [
         ViewMode::Day,
-        ViewMode::Week,
         ViewMode::WorkWeek,
+        ViewMode::Week,
         ViewMode::TwoWeeks,
         ViewMode::Month,
         ViewMode::TwoMonths,
@@ -183,10 +186,73 @@ pub struct AppConfig {
     /// a fresh install must never open on a hardcoded calendar date.
     #[serde(default = "unset_anchor")]
     pub anchor_date: NaiveDate,
+    /// Which views appear as buttons on the calendar screen, in the order
+    /// they should appear. Chosen in the settings screen. Empty or invalid
+    /// values fall back to every view via [`AppConfig::ordered_views`].
+    #[serde(default = "default_visible_views")]
+    pub visible_views: Vec<ViewMode>,
+    /// Text size for calendar event summaries inside a day cell. A larger
+    /// number is bigger; clamped to a sane range by
+    /// [`AppConfig::event_text_scale_clamped`].
+    #[serde(default = "default_event_text_scale")]
+    pub event_text_scale: i32,
+    /// The view the app opens on at startup. Clamped to a currently-visible
+    /// view by [`AppConfig::startup_view`].
+    #[serde(default = "default_view_mode")]
+    pub default_view: ViewMode,
+}
+
+impl AppConfig {
+    /// The lower/upper bounds the settings screen enforces on the event
+    /// text size.
+    pub const EVENT_TEXT_SCALE_MIN: i32 = 2;
+    pub const EVENT_TEXT_SCALE_MAX: i32 = 6;
+
+    /// The event text size, clamped to the supported range.
+    pub fn event_text_scale_clamped(&self) -> i32 {
+        self.event_text_scale
+            .clamp(Self::EVENT_TEXT_SCALE_MIN, Self::EVENT_TEXT_SCALE_MAX)
+    }
+
+    /// The views to show as buttons, in order — de-duplicated, and falling
+    /// back to every view (in the default order) when nothing valid is
+    /// selected, so the calendar screen is never left without buttons.
+    pub fn ordered_views(&self) -> Vec<ViewMode> {
+        let mut seen = Vec::new();
+        for v in &self.visible_views {
+            if !seen.contains(v) {
+                seen.push(*v);
+            }
+        }
+        if seen.is_empty() {
+            ViewMode::ALL.to_vec()
+        } else {
+            seen
+        }
+    }
+
+    /// The view to open on at startup: the configured `default_view` when it
+    /// is currently visible, otherwise the first visible view.
+    pub fn startup_view(&self) -> ViewMode {
+        let views = self.ordered_views();
+        if views.contains(&self.default_view) {
+            self.default_view
+        } else {
+            views[0]
+        }
+    }
 }
 
 fn default_view_mode() -> ViewMode {
     ViewMode::Month
+}
+
+fn default_visible_views() -> Vec<ViewMode> {
+    ViewMode::ALL.to_vec()
+}
+
+fn default_event_text_scale() -> i32 {
+    3
 }
 
 /// Sentinel for "no anchor chosen yet". Any date before 2000 is treated as
@@ -208,6 +274,9 @@ impl Default for AppConfig {
             view_mode: ViewMode::Month,
             sources: Vec::new(),
             anchor_date: unset_anchor(),
+            visible_views: default_visible_views(),
+            event_text_scale: default_event_text_scale(),
+            default_view: default_view_mode(),
         }
     }
 }
@@ -256,6 +325,64 @@ mod tests {
         assert!(!is_unset_anchor(
             NaiveDate::from_ymd_opt(2026, 1, 1).unwrap()
         ));
+    }
+
+    #[test]
+    fn ordered_views_dedupes_and_falls_back_to_all_when_empty() {
+        let config = AppConfig {
+            visible_views: vec![ViewMode::Month, ViewMode::Day, ViewMode::Month],
+            ..AppConfig::default()
+        };
+        assert_eq!(config.ordered_views(), vec![ViewMode::Month, ViewMode::Day]);
+        let config = AppConfig {
+            visible_views: vec![],
+            ..AppConfig::default()
+        };
+        assert_eq!(config.ordered_views(), ViewMode::ALL.to_vec());
+    }
+
+    #[test]
+    fn startup_view_clamps_to_a_visible_view() {
+        let config = AppConfig {
+            visible_views: vec![ViewMode::Day, ViewMode::Week],
+            default_view: ViewMode::Week, // visible → used as-is
+            ..AppConfig::default()
+        };
+        assert_eq!(config.startup_view(), ViewMode::Week);
+        let config = AppConfig {
+            visible_views: vec![ViewMode::Day, ViewMode::Week],
+            default_view: ViewMode::Month, // not visible → first visible
+            ..AppConfig::default()
+        };
+        assert_eq!(config.startup_view(), ViewMode::Day);
+    }
+
+    #[test]
+    fn event_text_scale_is_clamped_to_the_supported_range() {
+        let config = AppConfig {
+            event_text_scale: 99,
+            ..AppConfig::default()
+        };
+        assert_eq!(
+            config.event_text_scale_clamped(),
+            AppConfig::EVENT_TEXT_SCALE_MAX
+        );
+        let config = AppConfig {
+            event_text_scale: -5,
+            ..AppConfig::default()
+        };
+        assert_eq!(
+            config.event_text_scale_clamped(),
+            AppConfig::EVENT_TEXT_SCALE_MIN
+        );
+    }
+
+    #[test]
+    fn default_button_order_starts_with_day_then_work_week_then_week() {
+        assert_eq!(
+            &ViewMode::ALL[..3],
+            &[ViewMode::Day, ViewMode::WorkWeek, ViewMode::Week]
+        );
     }
 
     #[test]

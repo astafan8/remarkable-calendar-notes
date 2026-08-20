@@ -40,6 +40,11 @@ it:**
 - The device event loop polls the QTFB socket **adaptively**: roughly
   every 2 ms while a pen or finger is on the glass (or a burst of events
   just arrived), falling back to ~60 Hz when idle to spare the battery.
+- Segments drawn during one poll cycle are blitted into the framebuffer
+  in memory and pushed to the display as **one** partial update covering
+  their combined rectangle — not one blocking socket round-trip per pen
+  sample. That keeps the socket drained fast enough that QTFB does not
+  overflow and drop the rest of a fast stroke.
 
 **Why the first arc of a fast letter used to look straight.** QTFB does
 not forward every digitizer sample; it coalesces (and can drop) pen moves

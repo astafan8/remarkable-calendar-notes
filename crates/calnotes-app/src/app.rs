@@ -92,7 +92,7 @@ const TOOL_ACTIONS: [Action; 5] = [
 impl Action {
     fn label(&self) -> &'static str {
         match self {
-            Action::Settings => "SET",
+            Action::Settings => "SETTINGS",
             Action::Prev => "PREV",
             Action::Today => "TODAY",
             Action::Next => "NEXT",
@@ -216,6 +216,9 @@ pub struct App {
     /// Editable text field for the fixed UTC offset (minutes), shown on
     /// the settings screen. `Some` while the user is actively editing it.
     pub offset_editor: Option<TextField>,
+    /// Editable text field for the event text size, shown on the settings
+    /// screen. `Some` while the user is typing a size directly.
+    pub event_size_editor: Option<TextField>,
     next_source_seq: u64,
     /// Short, user-visible status line (refresh progress, login progress).
     pub status: String,
@@ -246,6 +249,9 @@ impl App {
         if calnotes_core::model::is_unset_anchor(state.config.anchor_date) {
             state.config.anchor_date = UtcOffset::new(state.config.utc_offset_minutes).today();
         }
+        // Open on the configured startup view (clamped to a visible view),
+        // rather than wherever the app happened to be left last time.
+        state.config.view_mode = state.config.startup_view();
         // Show the last successful fetch immediately, before (and if) the
         // network answers. `cached_window` stays `None`, so a real refresh
         // is still started by the caller.
@@ -266,6 +272,7 @@ impl App {
             ink_tool: InkTool::Pen,
             editor: None,
             offset_editor: None,
+            event_size_editor: None,
             next_source_seq: 0,
             status: String::new(),
             refresh_rx: None,
@@ -756,10 +763,11 @@ impl App {
         .collect()
     }
 
-    /// Toolbar button rectangles, one per [`ViewMode`], in display order.
+    /// Toolbar button rectangles, one per selected [`ViewMode`], in the
+    /// user-configured display order.
     fn view_buttons(&self) -> Vec<(ViewMode, view::Rect)> {
-        let modes = ViewMode::ALL;
-        let button_w = CANVAS_W / modes.len() as i32;
+        let modes = self.state.config.ordered_views();
+        let button_w = CANVAS_W / modes.len().max(1) as i32;
         modes
             .iter()
             .enumerate()
@@ -881,6 +889,28 @@ impl App {
         editor.calendar_url = TextField::new("https://caldav.icloud.com/1234567/calendars/home/");
         editor.focus = EditorField::CalendarUrl;
         self.editor = Some(editor);
+    }
+
+    /// Desktop-preview helper: the settings screen showing the source list
+    /// and the Display section (view picker, startup default, event size),
+    /// i.e. not the source editor.
+    pub fn show_settings_list_for_preview(&mut self) {
+        self.screen = Screen::Settings;
+        self.editor = None;
+        self.state.config.sources = vec![CalendarSource {
+            id: "demo".into(),
+            label: "Family iCloud".into(),
+            enabled: true,
+            kind: SourceKind::IcloudCalDav {
+                apple_id: "john.doe@icloud.com".into(),
+                app_specific_password: "secret".into(),
+                calendar_url: "https://caldav.icloud.com/home/".into(),
+            },
+            last_status: SourceStatus::Ok {
+                synced_at_utc: self.today().and_hms_opt(9, 0, 0).unwrap(),
+                event_count: 12,
+            },
+        }];
     }
 
     /// Desktop-preview helper: drop a few sample handwritten notes onto days
@@ -1142,6 +1172,20 @@ impl App {
         let (key, _mods) = calnotes_core::vkb::decode(raw);
         if let Some(offset) = &mut self.offset_editor {
             offset.apply_key(key);
+        } else if self.event_size_editor.is_some() {
+            if let Some(field) = &mut self.event_size_editor {
+                field.apply_key(key);
+            }
+            // Commit the typed size live (clamped) so the preview updates.
+            if let Some(field) = &self.event_size_editor {
+                if let Ok(n) = field.text.trim().parse::<i32>() {
+                    self.state.config.event_text_scale = n.clamp(
+                        calnotes_core::model::AppConfig::EVENT_TEXT_SCALE_MIN,
+                        calnotes_core::model::AppConfig::EVENT_TEXT_SCALE_MAX,
+                    );
+                    let _ = self.state.save_config();
+                }
+            }
         } else if let Some(editor) = &mut self.editor {
             editor.handle_key(key);
         }
@@ -1180,7 +1224,7 @@ impl App {
                     | (Action::Erase, InkTool::Erase)
                     | (Action::Lasso, InkTool::Lasso)
             );
-            draw_button(fb, rect, action.label(), active, Font::Ui);
+            draw_icon_button(fb, rect, icon_for(action), action.label(), active);
         }
         if !self.status.is_empty() {
             // Bottom edge: the only strip of the calendar screen that is
@@ -1254,23 +1298,28 @@ impl App {
                 Font::Ui,
             );
 
-            // Event summaries, one line each, below the day number.
-            let line_h = FrameBuffer::text_height(EVENT_TEXT_SCALE, Font::Ui);
+            // Event summaries, below the day number. Each event's text is
+            // word/letter-wrapped to the cell width; continuation lines are
+            // indented one character (a hanging indent) so it is clear where
+            // a new event begins. The size is user-configurable.
+            let event_scale = self.state.config.event_text_scale_clamped();
+            let line_h = FrameBuffer::text_height(event_scale, Font::Ui) + 2;
+            let indent = FrameBuffer::text_width("M", event_scale, Font::Ui);
+            let avail = (cell.rect.w - 8 - indent).max(1);
+            let bottom = cell.rect.y + cell.rect.h;
             let mut text_y = cell.rect.y + 6 + FrameBuffer::text_height(DAY_NUMBER_SCALE, Font::Ui);
-            for event in self.events_for(cell.date) {
-                if text_y + line_h > cell.rect.y + cell.rect.h {
-                    break;
+            'events: for event in self.events_for(cell.date) {
+                for (i, line) in wrap_text(&event.summary, avail, event_scale, Font::Ui)
+                    .iter()
+                    .enumerate()
+                {
+                    if text_y + line_h > bottom {
+                        break 'events;
+                    }
+                    let x = cell.rect.x + 4 + if i == 0 { 0 } else { indent };
+                    fb.draw_text(x, text_y, line, BLACK, event_scale, Font::Ui);
+                    text_y += line_h;
                 }
-                let summary = fit_text(&event.summary, cell.rect.w - 8, EVENT_TEXT_SCALE, Font::Ui);
-                fb.draw_text(
-                    cell.rect.x + 4,
-                    text_y,
-                    &summary,
-                    BLACK,
-                    EVENT_TEXT_SCALE,
-                    Font::Ui,
-                );
-                text_y += line_h;
             }
 
             // Handwritten ink, denormalized back into this cell's rect —
@@ -1300,6 +1349,7 @@ impl App {
             self.screen = Screen::Calendar;
             self.editor = None;
             self.editor_test_result = None;
+            self.event_size_editor = None;
             return;
         }
         if within(layout.refresh_button, x, y) {
@@ -1414,6 +1464,7 @@ impl App {
                     self.state.config.utc_offset_minutes.to_string(),
                 ));
             }
+            self.event_size_editor = None;
             self.status = "USE APPLOAD KEYBOARD BUTTON".to_string();
             return;
         }
@@ -1426,8 +1477,88 @@ impl App {
                         let _ = self.state.save_config();
                     }
                 }
+                return;
             }
         }
+        self.handle_display_settings_tap(&layout, x, y);
+    }
+
+    /// Handle a tap on the display-settings controls (view picker, startup
+    /// default cycler, event text-size stepper).
+    fn handle_display_settings_tap(&mut self, layout: &SettingsLayout, x: i32, y: i32) {
+        for (mode, rect) in &layout.view_toggles {
+            if within(*rect, x, y) {
+                // Deduplicate, then toggle: a first tap appends (so tap order
+                // becomes button order), a second tap removes it.
+                let mut views: Vec<ViewMode> = Vec::new();
+                for v in &self.state.config.visible_views {
+                    if !views.contains(v) {
+                        views.push(*v);
+                    }
+                }
+                if let Some(pos) = views.iter().position(|v| v == mode) {
+                    views.remove(pos);
+                } else {
+                    views.push(*mode);
+                }
+                self.state.config.visible_views = views;
+                // Keep the active and default views valid/visible.
+                let visible = self.state.config.ordered_views();
+                if !visible.contains(&self.state.config.view_mode) {
+                    self.state.config.view_mode = visible[0];
+                }
+                self.offset_editor = None;
+                self.event_size_editor = None;
+                let _ = self.state.save_config();
+                return;
+            }
+        }
+        if let Some(rect) = layout.default_view_button {
+            if within(rect, x, y) {
+                let views = self.state.config.ordered_views();
+                let idx = views
+                    .iter()
+                    .position(|v| *v == self.state.config.default_view)
+                    .unwrap_or(0);
+                self.state.config.default_view = views[(idx + 1) % views.len()];
+                let _ = self.state.save_config();
+                return;
+            }
+        }
+        if let Some(rect) = layout.event_minus_button {
+            if within(rect, x, y) {
+                self.adjust_event_text_scale(-1);
+                return;
+            }
+        }
+        if let Some(rect) = layout.event_plus_button {
+            if within(rect, x, y) {
+                self.adjust_event_text_scale(1);
+                return;
+            }
+        }
+        if let Some(rect) = layout.event_size_row {
+            if within(rect, x, y) {
+                if self.event_size_editor.is_none() {
+                    self.event_size_editor = Some(TextField::new(
+                        self.state.config.event_text_scale_clamped().to_string(),
+                    ));
+                    self.offset_editor = None;
+                }
+                self.status = "USE APPLOAD KEYBOARD BUTTON".to_string();
+            }
+        }
+    }
+
+    /// Nudge the event text size by `delta`, clamped, and persist it.
+    fn adjust_event_text_scale(&mut self, delta: i32) {
+        let next = (self.state.config.event_text_scale_clamped() + delta).clamp(
+            calnotes_core::model::AppConfig::EVENT_TEXT_SCALE_MIN,
+            calnotes_core::model::AppConfig::EVENT_TEXT_SCALE_MAX,
+        );
+        self.state.config.event_text_scale = next;
+        self.event_size_editor = None;
+        let _ = self.state.save_config();
     }
 
     /// Generate a new, collision-resistant source id.
@@ -1596,6 +1727,61 @@ impl App {
                 (None, None, None, None)
             };
 
+        // Display settings (view picker, startup default, event text size)
+        // — shown only when not editing a source, flowing below the add
+        // buttons.
+        let mut view_toggles = Vec::new();
+        let mut default_view_button = None;
+        let mut event_minus_button = None;
+        let mut event_plus_button = None;
+        let mut event_size_row = None;
+        let mut display_section_y = None;
+        if self.editor.is_none() {
+            let section_y = y + 112;
+            display_section_y = Some(section_y);
+            // Row of view toggles (heading is drawn ~46px above).
+            let toggles_y = section_y + 52;
+            let all = ViewMode::ALL;
+            let toggle_w = (CANVAS_W - 40) / all.len() as i32;
+            for (i, m) in all.iter().enumerate() {
+                view_toggles.push((
+                    *m,
+                    view::Rect {
+                        x: 20 + i as i32 * toggle_w,
+                        y: toggles_y,
+                        w: toggle_w - 8,
+                        h: 92,
+                    },
+                ));
+            }
+            // "Starts on" cycler + event size controls on the next row.
+            let controls_y = toggles_y + 128;
+            default_view_button = Some(view::Rect {
+                x: 20,
+                y: controls_y,
+                w: 520,
+                h: 84,
+            });
+            event_minus_button = Some(view::Rect {
+                x: 700,
+                y: controls_y,
+                w: 84,
+                h: 84,
+            });
+            event_size_row = Some(view::Rect {
+                x: 792,
+                y: controls_y,
+                w: 220,
+                h: 84,
+            });
+            event_plus_button = Some(view::Rect {
+                x: 1020,
+                y: controls_y,
+                w: 84,
+                h: 84,
+            });
+        }
+
         SettingsLayout {
             back_button,
             refresh_button,
@@ -1608,6 +1794,93 @@ impl App {
             cancel_button,
             editor_test_button,
             editor_result_origin,
+            view_toggles,
+            default_view_button,
+            event_minus_button,
+            event_plus_button,
+            event_size_row,
+            display_section_y,
+        }
+    }
+
+    /// Render the display-settings section: the view picker (tap to select
+    /// and order), the startup-default cycler, and the event text-size
+    /// stepper. Shown only when not editing a calendar source.
+    fn render_display_settings(&self, fb: &mut FrameBuffer, layout: &SettingsLayout) {
+        let Some(section_y) = layout.display_section_y else {
+            return;
+        };
+        fb.draw_text(20, section_y, "Display", BLACK, BODY_TEXT_SCALE, Font::Ui);
+        fb.draw_text(
+            20,
+            section_y + 24,
+            "Views: tap to show/hide; tap order = button order",
+            GRAY,
+            EVENT_TEXT_SCALE,
+            Font::Ui,
+        );
+        let order = self.state.config.ordered_views();
+        for (mode, rect) in &layout.view_toggles {
+            let selected = order.iter().position(|v| v == mode);
+            draw_button(
+                fb,
+                *rect,
+                &mode.label().to_uppercase(),
+                selected.is_some(),
+                Font::Ui,
+            );
+            if let Some(pos) = selected {
+                // Selection-order badge in the corner.
+                fb.draw_text(
+                    rect.x + 6,
+                    rect.y + 6,
+                    &format!("{}", pos + 1),
+                    BLACK,
+                    EVENT_TEXT_SCALE,
+                    Font::Ui,
+                );
+            }
+        }
+        if let Some(rect) = layout.default_view_button {
+            draw_button(
+                fb,
+                rect,
+                &format!(
+                    "STARTS ON: {}",
+                    self.state.config.startup_view().label().to_uppercase()
+                ),
+                false,
+                Font::Ui,
+            );
+        }
+        if let Some(rect) = layout.event_minus_button {
+            draw_button(fb, rect, "-", false, Font::Ui);
+        }
+        if let Some(rect) = layout.event_plus_button {
+            draw_button(fb, rect, "+", false, Font::Ui);
+        }
+        if let Some(rect) = layout.event_size_row {
+            fb.draw_rect_outline(
+                rect,
+                if self.event_size_editor.is_some() {
+                    BLACK
+                } else {
+                    GRAY
+                },
+            );
+            let text = if let Some(field) = &self.event_size_editor {
+                format!("TEXT {}", text_with_cursor(&field.text, field.cursor))
+            } else {
+                format!("TEXT {}", self.state.config.event_text_scale_clamped())
+            };
+            fb.draw_text(
+                rect.x + 12,
+                rect.y + 30,
+                &text,
+                BLACK,
+                BODY_TEXT_SCALE,
+                Font::Ui,
+            );
         }
     }
 
@@ -1723,6 +1996,8 @@ impl App {
         for (kind, rect) in &layout.add_buttons {
             draw_button(fb, *rect, add_button_label(*kind), false, Font::Ui);
         }
+
+        self.render_display_settings(fb, &layout);
 
         if let Some(login) = &self.google_login {
             let base_y = CANVAS_H - 150;
@@ -1903,6 +2178,223 @@ fn draw_button(fb: &mut FrameBuffer, rect: view::Rect, label: &str, active: bool
     fb.draw_text(tx, ty, label, BLACK, scale, font);
 }
 
+/// A small, hand-drawn line-art glyph for a toolbar action. Drawn with
+/// framebuffer primitives (the embedded font is a Latin-only subset with no
+/// symbol/emoji glyphs), which also keeps the look consistent with the
+/// app's minimalist style.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Icon {
+    Pen,
+    Erase,
+    Lasso,
+    Undo,
+    Clear,
+    Prev,
+    Next,
+    Today,
+    Settings,
+}
+
+fn icon_for(action: Action) -> Icon {
+    match action {
+        Action::Settings => Icon::Settings,
+        Action::Prev => Icon::Prev,
+        Action::Today => Icon::Today,
+        Action::Next => Icon::Next,
+        Action::Pen => Icon::Pen,
+        Action::Erase => Icon::Erase,
+        Action::Lasso => Icon::Lasso,
+        Action::Undo => Icon::Undo,
+        Action::ClearDay => Icon::Clear,
+    }
+}
+
+fn fill_triangle(fb: &mut FrameBuffer, area: view::Rect, pointing_right: bool) {
+    let x0 = area.x + area.w / 4;
+    let x1 = area.x + area.w * 3 / 4;
+    let cy = area.y + area.h / 2;
+    let half = (area.h / 3).max(2);
+    for x in x0..=x1 {
+        let t = (x - x0) as f32 / (x1 - x0).max(1) as f32;
+        let grow = if pointing_right { 1.0 - t } else { t };
+        let hh = (half as f32 * grow) as i32;
+        fb.fill_rect(
+            view::Rect {
+                x,
+                y: cy - hh,
+                w: 1,
+                h: 2 * hh + 1,
+            },
+            BLACK,
+        );
+    }
+}
+
+/// Draw `icon` centred in the square-ish `area`.
+fn draw_icon(fb: &mut FrameBuffer, area: view::Rect, icon: Icon) {
+    let cx = area.x + area.w / 2;
+    let cy = area.y + area.h / 2;
+    let r = (area.w.min(area.h) / 2 - 2).max(4);
+    match icon {
+        Icon::Pen => {
+            fb.draw_line(
+                area.x + 4,
+                area.y + area.h - 4,
+                area.x + area.w - 6,
+                area.y + 6,
+                BLACK,
+                3,
+            );
+            // Nib tick near the writing tip.
+            fb.draw_line(
+                area.x + 4,
+                area.y + area.h - 4,
+                area.x + 12,
+                area.y + area.h - 6,
+                BLACK,
+                2,
+            );
+        }
+        Icon::Erase => {
+            // An angled eraser block.
+            let a = (area.x + 3, cy + 8);
+            let b = (cx + 4, cy + 8);
+            let c = (cx + 10, cy - 8);
+            let d = (area.x + 9, cy - 8);
+            fb.draw_line(a.0, a.1, b.0, b.1, BLACK, 2);
+            fb.draw_line(b.0, b.1, c.0, c.1, BLACK, 2);
+            fb.draw_line(c.0, c.1, d.0, d.1, BLACK, 2);
+            fb.draw_line(d.0, d.1, a.0, a.1, BLACK, 2);
+            fb.draw_line(area.x + 6, cy, cx + 7, cy, BLACK, 2);
+        }
+        Icon::Lasso => {
+            // A dashed loop with a small tail.
+            let pts = 8;
+            let mut prev: Option<(i32, i32)> = None;
+            for i in 0..=pts {
+                let ang = std::f32::consts::TAU * i as f32 / pts as f32;
+                let x = cx + (r as f32 * ang.cos()) as i32;
+                let y = cy - 2 + (r as f32 * 0.8 * ang.sin()) as i32;
+                if let Some((px, py)) = prev {
+                    fb.draw_line_styled(px, py, x, y, BLACK, 2, Some((3, 3)));
+                }
+                prev = Some((x, y));
+            }
+            fb.draw_line(cx, cy - 2 + r, cx - 4, area.y + area.h - 2, BLACK, 2);
+        }
+        Icon::Undo => {
+            // A left-pointing arrow (undo / go back).
+            fb.draw_line(area.x + 4, cy, area.x + area.w - 4, cy, BLACK, 3);
+            fb.draw_line(area.x + 4, cy, area.x + 14, cy - 9, BLACK, 3);
+            fb.draw_line(area.x + 4, cy, area.x + 14, cy + 9, BLACK, 3);
+        }
+        Icon::Clear => {
+            fb.draw_line(
+                area.x + 4,
+                area.y + 4,
+                area.x + area.w - 4,
+                area.y + area.h - 4,
+                BLACK,
+                3,
+            );
+            fb.draw_line(
+                area.x + area.w - 4,
+                area.y + 4,
+                area.x + 4,
+                area.y + area.h - 4,
+                BLACK,
+                3,
+            );
+        }
+        Icon::Prev => fill_triangle(fb, area, false),
+        Icon::Next => fill_triangle(fb, area, true),
+        Icon::Today => {
+            // A little calendar page: outline with a thick top bar (mirrors
+            // the on-screen "today" double outline).
+            let box_rect = view::Rect {
+                x: cx - r,
+                y: cy - r,
+                w: 2 * r,
+                h: 2 * r,
+            };
+            fb.draw_rect_outline(box_rect, BLACK);
+            fb.fill_rect(
+                view::Rect {
+                    x: box_rect.x,
+                    y: box_rect.y,
+                    w: box_rect.w,
+                    h: 6,
+                },
+                BLACK,
+            );
+        }
+        Icon::Settings => {
+            // Three slider tracks with offset knobs.
+            for (i, ky) in [cy - 9, cy, cy + 9].iter().enumerate() {
+                fb.fill_rect(
+                    view::Rect {
+                        x: area.x + 3,
+                        y: *ky - 1,
+                        w: area.w - 6,
+                        h: 2,
+                    },
+                    BLACK,
+                );
+                let knob_x = match i {
+                    0 => area.x + area.w / 4,
+                    1 => area.x + area.w * 3 / 4 - 8,
+                    _ => cx - 4,
+                };
+                fb.fill_rect(
+                    view::Rect {
+                        x: knob_x,
+                        y: *ky - 5,
+                        w: 8,
+                        h: 10,
+                    },
+                    BLACK,
+                );
+            }
+        }
+    }
+}
+
+/// A toolbar button with a leading line-art icon and a label to its right.
+fn draw_icon_button(fb: &mut FrameBuffer, rect: view::Rect, icon: Icon, label: &str, active: bool) {
+    fb.draw_rect_outline(rect, BLACK);
+    if active {
+        fb.fill_rect(
+            view::Rect {
+                x: rect.x + 2,
+                y: rect.y + 2,
+                w: rect.w - 4,
+                h: rect.h - 4,
+            },
+            GRAY,
+        );
+    }
+    let pad = 10;
+    let icon_size = (rect.h - 2 * pad).clamp(16, 48);
+    let icon_area = view::Rect {
+        x: rect.x + pad,
+        y: rect.y + (rect.h - icon_size) / 2,
+        w: icon_size,
+        h: icon_size,
+    };
+    draw_icon(fb, icon_area, icon);
+    // Label centred in the space to the right of the icon.
+    let text_left = icon_area.x + icon_size + 8;
+    let text_w = (rect.x + rect.w - 6 - text_left).max(0);
+    let scale = (2..=UI_TEXT_SCALE)
+        .rev()
+        .find(|s| FrameBuffer::text_width(label, *s, Font::Ui) <= text_w)
+        .unwrap_or(2);
+    let tw = FrameBuffer::text_width(label, scale, Font::Ui);
+    let tx = text_left + ((text_w - tw) / 2).max(0);
+    let ty = rect.y + (rect.h - FrameBuffer::text_height(scale, Font::Ui)) / 2;
+    fb.draw_text(tx, ty, label, BLACK, scale, Font::Ui);
+}
+
 /// Truncate `text` (with an ellipsis) to whatever fits in `max_width`
 /// pixels at `scale` in `font`.
 fn fit_text(text: &str, max_width: i32, scale: i32, font: Font) -> String {
@@ -2069,6 +2561,14 @@ struct SettingsLayout {
     editor_test_button: Option<view::Rect>,
     /// Where the wrapped, multi-line test result is drawn (top-left).
     editor_result_origin: Option<(i32, i32)>,
+    /// Display-settings controls, shown only when not editing a source.
+    view_toggles: Vec<(ViewMode, view::Rect)>,
+    default_view_button: Option<view::Rect>,
+    event_minus_button: Option<view::Rect>,
+    event_plus_button: Option<view::Rect>,
+    event_size_row: Option<view::Rect>,
+    /// Top-left of the "Display" section, for the section's heading text.
+    display_section_y: Option<i32>,
 }
 
 /// Which field of the source-under-edit currently has keyboard focus.
@@ -2363,10 +2863,69 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    fn settings_display_controls_pick_views_default_and_event_size() {
+        with_temp_data_dir(|| {
+            let mut app = App::new().unwrap();
+            app.screen = Screen::Settings;
+
+            // Deselect every view except Day and Week, in that tap order.
+            // Start from all-selected: tapping a selected view removes it.
+            for target_remove in [
+                ViewMode::WorkWeek,
+                ViewMode::TwoWeeks,
+                ViewMode::Month,
+                ViewMode::TwoMonths,
+            ] {
+                let layout = app.settings_layout();
+                let (_, rect) = layout
+                    .view_toggles
+                    .iter()
+                    .find(|(m, _)| *m == target_remove)
+                    .copied()
+                    .unwrap();
+                app.handle_touch_tap(rect.x + 5, rect.y + 5);
+            }
+            assert_eq!(
+                app.state.config.ordered_views(),
+                vec![ViewMode::Day, ViewMode::Week]
+            );
+
+            // The startup default cycler moves through the visible views.
+            let before = app.state.config.startup_view();
+            let layout = app.settings_layout();
+            let cycler = layout.default_view_button.unwrap();
+            app.handle_touch_tap(cycler.x + 5, cycler.y + 5);
+            assert_ne!(app.state.config.startup_view(), before);
+            assert!(app
+                .state
+                .config
+                .ordered_views()
+                .contains(&app.state.config.default_view));
+
+            // Event text size +/- steppers clamp within range.
+            let start = app.state.config.event_text_scale_clamped();
+            let layout = app.settings_layout();
+            let plus = layout.event_plus_button.unwrap();
+            app.handle_touch_tap(plus.x + 5, plus.y + 5);
+            assert_eq!(app.state.config.event_text_scale_clamped(), start + 1);
+            let layout = app.settings_layout();
+            let minus = layout.event_minus_button.unwrap();
+            app.handle_touch_tap(minus.x + 5, minus.y + 5);
+            assert_eq!(app.state.config.event_text_scale_clamped(), start);
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn toolbar_tap_switches_view_mode() {
         with_temp_data_dir(|| {
             let mut app = App::new().unwrap();
-            let (_, week_button) = app.view_buttons()[1];
+            // Tap whichever button is the Week view, regardless of order.
+            let (_, week_button) = app
+                .view_buttons()
+                .into_iter()
+                .find(|(m, _)| *m == ViewMode::Week)
+                .unwrap();
             app.handle_touch_tap(week_button.x + 5, week_button.y + 5);
             assert_eq!(app.state.config.view_mode, ViewMode::Week);
         });

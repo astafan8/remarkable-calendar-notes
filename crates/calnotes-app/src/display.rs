@@ -180,6 +180,52 @@ fn wrap(text: &str, max_chars: usize) -> Vec<String> {
     lines
 }
 
+/// Draw one stroke segment into the framebuffer that already holds the
+/// current screen, **without** touching the display: returns the rectangle
+/// the segment dirtied (clamped to the framebuffer), or `None` if it fell
+/// entirely outside. The caller accumulates these and publishes them in one
+/// batch per poll cycle — see [`publish_rect`] — so a fast stroke does not
+/// issue one blocking socket round-trip per pen sample (which would let
+/// QTFB's input buffer overflow and drop the rest of the stroke).
+pub fn blit_segment(fb: &mut FrameBuffer, segment: PenSegment) -> Option<Rect> {
+    let dash = if segment.dashed { Some((8, 8)) } else { None };
+    fb.draw_line_styled(
+        segment.x0,
+        segment.y0,
+        segment.x1,
+        segment.y1,
+        segment.gray,
+        segment.thickness,
+        dash,
+    );
+    fb.clamp_rect(segment.dirty_rect())
+}
+
+/// Publish one rectangle of the framebuffer to the display: copy just those
+/// pixels into QTFB's shared memory and refresh only that region. Returns
+/// `false` if the rectangle could not be copied.
+pub fn publish_rect<S: FrameSink>(sink: &mut S, fb: &FrameBuffer, rect: Rect) -> io::Result<bool> {
+    if fb.write_rect_rgb565_into(sink.pixels(), rect).is_none() {
+        return Ok(false);
+    }
+    sink.request_partial_update(rect)?;
+    Ok(true)
+}
+
+/// The smallest rectangle covering both `a` and `b`.
+pub fn union_rect(a: Rect, b: Rect) -> Rect {
+    let x0 = a.x.min(b.x);
+    let y0 = a.y.min(b.y);
+    let x1 = (a.x + a.w).max(b.x + b.w);
+    let y1 = (a.y + a.h).max(b.y + b.h);
+    Rect {
+        x: x0,
+        y: y0,
+        w: x1 - x0,
+        h: y1 - y0,
+    }
+}
+
 /// Incremental pen update: draw one stroke segment into the framebuffer
 /// that already holds the current screen, publish only the pixels that
 /// segment touched, and refresh only that rectangle.
@@ -191,23 +237,12 @@ pub fn draw_segment<S: FrameSink>(
     fb: &mut FrameBuffer,
     segment: PenSegment,
 ) -> io::Result<Option<Rect>> {
-    let dash = if segment.dashed { Some((8, 8)) } else { None };
-    fb.draw_line_styled(
-        segment.x0,
-        segment.y0,
-        segment.x1,
-        segment.y1,
-        segment.gray,
-        segment.thickness,
-        dash,
-    );
-    let Some(dirty) = fb.clamp_rect(segment.dirty_rect()) else {
+    let Some(dirty) = blit_segment(fb, segment) else {
         return Ok(None);
     };
-    if fb.write_rect_rgb565_into(sink.pixels(), dirty).is_none() {
+    if !publish_rect(sink, fb, dirty)? {
         return Ok(None);
     }
-    sink.request_partial_update(dirty)?;
     Ok(Some(dirty))
 }
 
