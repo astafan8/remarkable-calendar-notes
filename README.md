@@ -8,20 +8,24 @@ external QTFB app — no jailbreak/takeover mode required.
 | --- | --- |
 | [![Month view with handwritten notes](docs/screenshots/month.png)](docs/screenshots/month.png) | [![Settings menu](docs/screenshots/settings.png)](docs/screenshots/settings.png) |
 
-- **Views:** Day, Week, Work Week, Two Weeks, Month (the default), and Two
-  Months, with compact, handwriting-friendly grids and `PREV`/`TODAY`/
-  `NEXT` navigation; `TODAY` always jumps to the real current date at your
-  configured UTC offset. Both a finger and the pen operate the toolbar
-  buttons; a finger tap on a cell opens that day, while resting your palm
-  to write is ignored (palm rejection).
+- **Views:** Day, Work Week, Week, Two Weeks, Month, and Two Months, with
+  compact, handwriting-friendly grids and `PREV`/`TODAY`/`NEXT`
+  navigation; `TODAY` always jumps to the real current date at your
+  configured UTC offset. In Settings you choose **which views appear and in
+  what order**, and **which view the app opens on**. Every view except Two
+  Months uses the same day-cell aspect ratio, so a note keeps its shape as
+  you switch views. Both a finger and the pen operate the toolbar buttons;
+  a finger tap on a cell opens that day, while resting your palm to write
+  is ignored (palm rejection).
 - **Notes:** write on any date in any view with the pen; notes are stored
   normalized to that date's grid cell, so the same handwriting renders
-  at a fixed aspect ratio in every view and survives navigation/restart.
+  in every view and survives navigation/restart.
   Use **PEN**, stroke **ERASE** (with a faint eraser trail), or **LASSO**
   (a dashed grey outline) deletion. Each pen sample draws only its newest
-  stroke segment and refreshes only the few pixels it touched. **UNDO**
-  reverses your last edit — including an erase or lasso — and clear-day is
-  included.
+  stroke segment and refreshes only the few pixels it touched; the event
+  loop polls the pen aggressively and batches display updates so fast
+  strokes keep their shape. **UNDO** reverses your last edit — including an
+  erase or lasso — and clear-day is included.
 - **Calendar sources**, all configured in-app (no config files to hand
   edit): a local `.ics` file, an arbitrary HTTPS `.ics` URL, Google
   Calendar (OAuth device flow, with an in-app `LOG IN` action), and iCloud

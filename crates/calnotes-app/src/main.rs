@@ -114,6 +114,7 @@ fn run_preview(args: &[String]) -> ExitCode {
     let mut view_mode: Option<calnotes_core::model::ViewMode> = None;
     let mut refresh = false;
     let mut settings = false;
+    let mut settings_list = false;
     let mut demo_ink = false;
     let mut i = 0;
     while i < args.len() {
@@ -130,6 +131,7 @@ fn run_preview(args: &[String]) -> ExitCode {
             }
             "--refresh" => refresh = true,
             "--settings" => settings = true,
+            "--settings-list" => settings_list = true,
             "--demo-ink" => demo_ink = true,
             _ => {}
         }
@@ -154,6 +156,9 @@ fn run_preview(args: &[String]) -> ExitCode {
     }
     if settings {
         app.show_settings_for_preview();
+    }
+    if settings_list {
+        app.show_settings_list_for_preview();
     }
     let fb = app.render();
     if let Err(e) = std::fs::write(&out_path, fb.to_ppm()) {
@@ -368,6 +373,14 @@ mod device_loop {
                 Ok(events) => {
                     had_events = !events.is_empty();
                     let mut needs_full_redraw = false;
+                    // Segments drawn this cycle are blitted into `fb`
+                    // immediately (cheap, in-memory) and their dirty rects
+                    // unioned here, so the whole burst is pushed to the
+                    // display in ONE partial update below instead of one
+                    // blocking socket round-trip per pen sample. That keeps
+                    // us draining the socket fast enough that QTFB does not
+                    // overflow and drop the rest of a fast stroke.
+                    let mut pen_dirty: Option<Rect> = None;
                     for ev in events {
                         match ev.kind {
                             input_kind::TOUCH_PRESS => {
@@ -449,15 +462,11 @@ mod device_loop {
                                     track.invalid = true;
                                 }
                                 if let Some(segment) = app.pen_move(ev.x, ev.y, ev.pen_pressure()) {
-                                    if let Err(e) = display::draw_segment(sink, fb, segment) {
-                                        super::diagnostics::log(format_args!(
-                                            "partial update failed: {e}"
-                                        ));
-                                        return show_fatal_screen(
-                                            sink,
-                                            "DISPLAY ERROR",
-                                            "PARTIAL UPDATE FAILED",
-                                        );
+                                    if let Some(rect) = display::blit_segment(fb, segment) {
+                                        pen_dirty = Some(match pen_dirty {
+                                            Some(acc) => display::union_rect(acc, rect),
+                                            None => rect,
+                                        });
                                     }
                                 }
                             }
@@ -477,8 +486,26 @@ mod device_loop {
                             _ => {}
                         }
                     }
-                    if needs_full_redraw && !redraw(sink, &app, fb, "input") {
-                        return show_fatal_screen(sink, "DISPLAY ERROR", "INPUT REDRAW FAILED");
+                    if needs_full_redraw {
+                        // A full redraw repaints the committed ink too, so it
+                        // supersedes any accumulated pen rectangle.
+                        if !redraw(sink, &app, fb, "input") {
+                            return show_fatal_screen(sink, "DISPLAY ERROR", "INPUT REDRAW FAILED");
+                        }
+                    } else if let Some(rect) = pen_dirty {
+                        // One partial update for the whole burst drawn this
+                        // cycle.
+                        match display::publish_rect(sink, fb, rect) {
+                            Ok(_) => {}
+                            Err(e) => {
+                                super::diagnostics::log(format_args!("partial update failed: {e}"));
+                                return show_fatal_screen(
+                                    sink,
+                                    "DISPLAY ERROR",
+                                    "PARTIAL UPDATE FAILED",
+                                );
+                            }
+                        }
                     }
                 }
                 Err(_) => {
