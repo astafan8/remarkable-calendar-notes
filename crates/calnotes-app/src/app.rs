@@ -249,9 +249,11 @@ impl App {
         if calnotes_core::model::is_unset_anchor(state.config.anchor_date) {
             state.config.anchor_date = UtcOffset::new(state.config.utc_offset_minutes).today();
         }
-        // Open on the configured startup view (clamped to a visible view),
-        // rather than wherever the app happened to be left last time.
-        state.config.view_mode = state.config.startup_view();
+        // Open on the configured startup view: either the last-used view
+        // (the value just loaded from disk) or the chosen default, each
+        // clamped to a currently-visible view.
+        let last_used = state.config.view_mode;
+        state.config.view_mode = state.config.startup_view(last_used);
         // Show the last successful fetch immediately, before (and if) the
         // network answers. `cached_window` stays `None`, so a real refresh
         // is still started by the caller.
@@ -1515,12 +1517,25 @@ impl App {
         }
         if let Some(rect) = layout.default_view_button {
             if within(rect, x, y) {
+                // Cycle through: each visible view in order, then "LAST
+                // USED", then back to the first view.
                 let views = self.state.config.ordered_views();
-                let idx = views
-                    .iter()
-                    .position(|v| *v == self.state.config.default_view)
-                    .unwrap_or(0);
-                self.state.config.default_view = views[(idx + 1) % views.len()];
+                if self.state.config.startup_last_used {
+                    // LAST USED → first view.
+                    self.state.config.startup_last_used = false;
+                    self.state.config.default_view = views[0];
+                } else {
+                    match views
+                        .iter()
+                        .position(|v| *v == self.state.config.default_view)
+                    {
+                        Some(i) if i + 1 < views.len() => {
+                            self.state.config.default_view = views[i + 1];
+                        }
+                        // Last view (or a stale default) → LAST USED.
+                        _ => self.state.config.startup_last_used = true,
+                    }
+                }
                 let _ = self.state.save_config();
                 return;
             }
@@ -1842,16 +1857,12 @@ impl App {
             }
         }
         if let Some(rect) = layout.default_view_button {
-            draw_button(
-                fb,
-                rect,
-                &format!(
-                    "STARTS ON: {}",
-                    self.state.config.startup_view().label().to_uppercase()
-                ),
-                false,
-                Font::Ui,
-            );
+            let label = if self.state.config.startup_last_used {
+                "LAST USED".to_string()
+            } else {
+                self.state.config.default_view.label().to_uppercase()
+            };
+            draw_button(fb, rect, &format!("STARTS ON: {label}"), false, Font::Ui);
         }
         if let Some(rect) = layout.event_minus_button {
             draw_button(fb, rect, "-", false, Font::Ui);
@@ -2890,17 +2901,27 @@ mod tests {
                 vec![ViewMode::Day, ViewMode::Week]
             );
 
-            // The startup default cycler moves through the visible views.
-            let before = app.state.config.startup_view();
-            let layout = app.settings_layout();
-            let cycler = layout.default_view_button.unwrap();
-            app.handle_touch_tap(cycler.x + 5, cycler.y + 5);
-            assert_ne!(app.state.config.startup_view(), before);
-            assert!(app
-                .state
-                .config
-                .ordered_views()
-                .contains(&app.state.config.default_view));
+            // The startup cycler steps through the visible views and a
+            // "LAST USED" state, then wraps around. Visible views are
+            // [Day, Week], so the cycle is Day → Week → LAST USED → Day.
+            let cycler = app.settings_layout().default_view_button.unwrap();
+            let mut seen_last_used = false;
+            let mut seen_a_view = false;
+            for _ in 0..3 {
+                app.handle_touch_tap(cycler.x + 5, cycler.y + 5);
+                if app.state.config.startup_last_used {
+                    seen_last_used = true;
+                } else {
+                    seen_a_view = true;
+                    // A concrete default is always one of the visible views.
+                    assert!(app
+                        .state
+                        .config
+                        .ordered_views()
+                        .contains(&app.state.config.default_view));
+                }
+            }
+            assert!(seen_last_used && seen_a_view);
 
             // Event text size +/- steppers clamp within range.
             let start = app.state.config.event_text_scale_clamped();

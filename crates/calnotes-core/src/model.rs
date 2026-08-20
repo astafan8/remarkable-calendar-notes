@@ -197,9 +197,14 @@ pub struct AppConfig {
     #[serde(default = "default_event_text_scale")]
     pub event_text_scale: i32,
     /// The view the app opens on at startup. Clamped to a currently-visible
-    /// view by [`AppConfig::startup_view`].
+    /// view by [`AppConfig::startup_view`]. Ignored when
+    /// [`AppConfig::startup_last_used`] is set.
     #[serde(default = "default_view_mode")]
     pub default_view: ViewMode,
+    /// When true, the app opens on the last-used view instead of
+    /// `default_view`.
+    #[serde(default)]
+    pub startup_last_used: bool,
 }
 
 impl AppConfig {
@@ -231,12 +236,18 @@ impl AppConfig {
         }
     }
 
-    /// The view to open on at startup: the configured `default_view` when it
-    /// is currently visible, otherwise the first visible view.
-    pub fn startup_view(&self) -> ViewMode {
+    /// The view to open on at startup: the last-used view when
+    /// `startup_last_used` is set, otherwise the configured `default_view` —
+    /// each clamped to a currently-visible view.
+    pub fn startup_view(&self, last_used: ViewMode) -> ViewMode {
         let views = self.ordered_views();
-        if views.contains(&self.default_view) {
+        let wanted = if self.startup_last_used {
+            last_used
+        } else {
             self.default_view
+        };
+        if views.contains(&wanted) {
+            wanted
         } else {
             views[0]
         }
@@ -277,6 +288,7 @@ impl Default for AppConfig {
             visible_views: default_visible_views(),
             event_text_scale: default_event_text_scale(),
             default_view: default_view_mode(),
+            startup_last_used: false,
         }
     }
 }
@@ -348,13 +360,27 @@ mod tests {
             default_view: ViewMode::Week, // visible → used as-is
             ..AppConfig::default()
         };
-        assert_eq!(config.startup_view(), ViewMode::Week);
+        assert_eq!(config.startup_view(ViewMode::Month), ViewMode::Week);
         let config = AppConfig {
             visible_views: vec![ViewMode::Day, ViewMode::Week],
             default_view: ViewMode::Month, // not visible → first visible
             ..AppConfig::default()
         };
-        assert_eq!(config.startup_view(), ViewMode::Day);
+        assert_eq!(config.startup_view(ViewMode::TwoMonths), ViewMode::Day);
+    }
+
+    #[test]
+    fn startup_view_uses_last_used_when_enabled() {
+        let config = AppConfig {
+            visible_views: vec![ViewMode::Day, ViewMode::Week, ViewMode::Month],
+            startup_last_used: true,
+            default_view: ViewMode::Day,
+            ..AppConfig::default()
+        };
+        // Last-used wins over default_view when visible…
+        assert_eq!(config.startup_view(ViewMode::Week), ViewMode::Week);
+        // …and falls back to the first visible view when not.
+        assert_eq!(config.startup_view(ViewMode::TwoMonths), ViewMode::Day);
     }
 
     #[test]
