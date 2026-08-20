@@ -226,12 +226,13 @@ pub fn union_rect(a: Rect, b: Rect) -> Rect {
     }
 }
 
-/// Incremental pen update: draw one stroke segment into the framebuffer
-/// that already holds the current screen, publish only the pixels that
-/// segment touched, and refresh only that rectangle.
+/// Incremental pen update: blit one stroke segment and publish it in a
+/// single call. Used by tests; the device loop uses [`blit_segment`] +
+/// [`publish_rect`] directly so it can batch a whole burst into one update.
 ///
 /// Returns the refreshed rectangle, or `None` if the segment fell
 /// entirely outside the framebuffer.
+#[cfg(test)]
 pub fn draw_segment<S: FrameSink>(
     sink: &mut S,
     fb: &mut FrameBuffer,
@@ -316,9 +317,8 @@ mod tests {
 
             app.pen_down(300, 700, 1.0);
             let segment = app.pen_move(306, 704, 1.0).unwrap();
-            let dirty = draw_segment(&mut sink, &mut fb, segment)
-                .unwrap()
-                .expect("a dirty rect");
+            let dirty = blit_segment(&mut fb, segment).expect("a dirty rect");
+            assert!(publish_rect(&mut sink, &fb, dirty).unwrap());
 
             // Exactly one partial refresh, no extra full refresh.
             assert_eq!(sink.full_updates, 1);
