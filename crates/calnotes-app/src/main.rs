@@ -367,6 +367,29 @@ mod device_loop {
         // so it is ignored instead of opening the day under the palm.
         let mut touch: Option<TouchTrack> = None;
 
+        // Try to read the pen digitizer directly for smoother handwriting.
+        // If it opens, we use its samples (every hardware sample, no QTFB
+        // coalescing) and ignore QTFB pen events once the first raw sample
+        // arrives; if it never opens or never produces a sample, QTFB pen
+        // keeps working exactly as before.
+        let wacom = calnotes_device::wacom::reader::spawn(CANVAS_W, CANVAS_H);
+        match &wacom {
+            Some((info, _)) => super::diagnostics::log(format_args!(
+                "raw pen: reading {} ('{}') x={:?} y={:?} pmax={}",
+                info.path, info.name, info.x, info.y, info.pressure_max
+            )),
+            None => super::diagnostics::log(format_args!(
+                "raw pen: no digitizer found; using QTFB pen events"
+            )),
+        }
+        let wacom_rx = wacom.map(|(_, rx)| rx);
+        // Set once the first raw pen sample is seen and used, after which
+        // QTFB pen events are ignored to avoid drawing each stroke twice.
+        let mut raw_pen_active = false;
+        // Whether the current raw stroke is writing ink (vs a pen tap that
+        // hit a toolbar/settings control).
+        let mut raw_writing = false;
+
         loop {
             let had_events;
             match sink.0.poll_events() {
@@ -437,7 +460,7 @@ mod device_loop {
                                     }
                                 }
                             }
-                            input_kind::PEN_PRESS => {
+                            input_kind::PEN_PRESS if !raw_pen_active => {
                                 // Any pen use during a finger contact marks
                                 // that contact as a palm.
                                 if let Some(track) = touch.as_mut() {
@@ -457,7 +480,7 @@ mod device_loop {
                                     }
                                 }
                             }
-                            input_kind::PEN_UPDATE if pen_down => {
+                            input_kind::PEN_UPDATE if pen_down && !raw_pen_active => {
                                 if let Some(track) = touch.as_mut() {
                                     track.invalid = true;
                                 }
@@ -470,7 +493,7 @@ mod device_loop {
                                     }
                                 }
                             }
-                            input_kind::PEN_RELEASE => {
+                            input_kind::PEN_RELEASE if !raw_pen_active => {
                                 if let Some(track) = touch.as_mut() {
                                     track.invalid = true;
                                 }
@@ -486,6 +509,68 @@ mod device_loop {
                             _ => {}
                         }
                     }
+
+                    // Raw pen digitizer samples (every hardware sample). If
+                    // the user disabled raw pen, drop any samples and let the
+                    // QTFB pen path run instead.
+                    let raw_enabled = app.state.config.raw_pen_input;
+                    if let Some(rx) = &wacom_rx {
+                        while let Ok(sample) = rx.try_recv() {
+                            if !raw_enabled {
+                                raw_pen_active = false;
+                                raw_writing = false;
+                                continue;
+                            }
+                            // Once we trust raw pen, ignore QTFB pen events.
+                            if !raw_pen_active {
+                                raw_pen_active = true;
+                                super::diagnostics::log(format_args!(
+                                    "raw pen: first sample received; using digitizer input"
+                                ));
+                            }
+                            // The pen is being used → any finger contact is a
+                            // palm, not a tap.
+                            if let Some(track) = touch.as_mut() {
+                                track.invalid = true;
+                            }
+                            match sample {
+                                calnotes_device::wacom::PenSample::Down { x, y, pressure } => {
+                                    // A pen tap on a toolbar/settings control
+                                    // acts like a finger tap; below the
+                                    // toolbar it begins writing.
+                                    match app.handle_pen_tap(x, y) {
+                                        Some(redraw) => {
+                                            needs_full_redraw |= redraw;
+                                            raw_writing = false;
+                                        }
+                                        None => {
+                                            raw_writing = true;
+                                            app.pen_down(x, y, pressure);
+                                        }
+                                    }
+                                }
+                                calnotes_device::wacom::PenSample::Move { x, y, pressure } => {
+                                    if raw_writing {
+                                        if let Some(segment) = app.pen_move(x, y, pressure) {
+                                            if let Some(rect) = display::blit_segment(fb, segment) {
+                                                pen_dirty = Some(match pen_dirty {
+                                                    Some(acc) => display::union_rect(acc, rect),
+                                                    None => rect,
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                                calnotes_device::wacom::PenSample::Up => {
+                                    if raw_writing {
+                                        needs_full_redraw |= app.pen_up();
+                                        raw_writing = false;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     if needs_full_redraw {
                         // A full redraw repaints the committed ink too, so it
                         // supersedes any accumulated pen rectangle.
@@ -554,7 +639,7 @@ mod device_loop {
             // continuously so strokes (including the very first arc of a
             // letter) keep their shape and feel responsive. When idle, fall
             // back to a calm ~60 Hz to spare the battery.
-            let input_active = pen_down || touch.is_some() || had_events;
+            let input_active = pen_down || raw_writing || touch.is_some() || had_events;
             let idle_sleep = Duration::from_millis(16);
             let active_sleep = Duration::from_millis(2);
             std::thread::sleep(if input_active {

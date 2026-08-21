@@ -205,6 +205,12 @@ pub struct AppConfig {
     /// `default_view`.
     #[serde(default)]
     pub startup_last_used: bool,
+    /// When true (default), read the pen digitizer directly for smoother
+    /// handwriting; falls back to QTFB pen events automatically if the
+    /// device can't be read. Turn off if raw pen ink lands in the wrong
+    /// place on your unit.
+    #[serde(default = "default_true")]
+    pub raw_pen_input: bool,
 }
 
 impl AppConfig {
@@ -266,6 +272,10 @@ fn default_event_text_scale() -> i32 {
     3
 }
 
+fn default_true() -> bool {
+    true
+}
+
 /// Sentinel for "no anchor chosen yet". Any date before 2000 is treated as
 /// unset by the app (see `App::new`), so this can never be confused with a
 /// date a user actually navigated to.
@@ -289,6 +299,7 @@ impl Default for AppConfig {
             event_text_scale: default_event_text_scale(),
             default_view: default_view_mode(),
             startup_last_used: false,
+            raw_pen_input: true,
         }
     }
 }
@@ -415,5 +426,16 @@ mod tests {
     fn config_without_an_anchor_field_deserializes_to_the_unset_sentinel() {
         let config: AppConfig = serde_json::from_str("{}").unwrap();
         assert!(is_unset_anchor(config.anchor_date));
+    }
+
+    #[test]
+    fn config_defaults_enable_raw_pen_and_the_new_display_fields() {
+        // An old config (pre-dating these fields) still deserializes with
+        // sensible defaults.
+        let config: AppConfig = serde_json::from_str("{}").unwrap();
+        assert!(config.raw_pen_input);
+        assert_eq!(config.visible_views, ViewMode::ALL.to_vec());
+        assert_eq!(config.event_text_scale, 3);
+        assert!(!config.startup_last_used);
     }
 }

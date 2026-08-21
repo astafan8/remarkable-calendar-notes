@@ -46,17 +46,36 @@ it:**
   sample. That keeps the socket drained fast enough that QTFB does not
   overflow and drop the rest of a fast stroke.
 
-**Why the first arc of a fast letter used to look straight.** QTFB does
+**Why the first arc of a small/fast letter used to be lost.** QTFB does
 not forward every digitizer sample; it coalesces (and can drop) pen moves
-between reads, more so under load. If the socket is only drained every
-~16 ms, the first move after contact can already be a long way from where
-the pen touched down, so the first drawn segment is one long straight line
-before the curve catches up. Draining the socket every ~2 ms while writing
-gives QTFB far less time to coalesce, so many more of the pen's
-high-frequency points survive and curves keep their shape from the very
-start. We cannot exceed what QTFB delivers — an AppLoad app has no direct
-access to the Wacom `/dev/input` digitizer — but polling aggressively
-captures as much of it as the platform allows.
+between reads, and it appears to only forward a pen move once the pen has
+travelled "far enough". For a small (3–5 mm) or quick stroke, that means
+the slow initial arc — and sometimes the contact point itself — never
+arrives, so the beginning of the letter is missing or collapses to a
+straight line.
+
+**What we do about it: read the digitizer directly.** On device the app
+now *also* opens the Wacom pen input device (`/dev/input/event*`) and reads
+**every** hardware sample itself, exactly like the community `harmony`
+app, decoding contact/position/pressure and mapping digitizer coordinates
+to the screen (swap axes + invert Y, using the axis ranges the device
+reports). A background thread streams samples into an unbounded channel, so
+nothing is dropped even if a frame is briefly slow. See
+`calnotes_device::wacom`.
+
+This is done **without grabbing** the device, so QTFB and the AppLoad
+virtual keyboard keep working. The app uses raw samples once the first one
+arrives and ignores QTFB pen events from then on; if the device can't be
+opened or never produces a sample (e.g. a firmware that routes it
+differently), it silently falls back to the QTFB pen path — so raw pen can
+only ever help, never make input worse. It can be turned off in
+**Settings → Display → PEN INPUT** (which reverts to QTFB pen) in case the
+raw coordinate mapping is wrong on a particular unit.
+
+Even with direct digitizer reads, output still goes through QTFB's
+software framebuffer path (below), so expect more latency than xochitl's
+native handwriting — but the *shape* of small strokes is now captured
+faithfully.
 
 Even with all of that, expect visibly more latency than xochitl's own
 handwriting, especially during fast strokes. This is a platform ceiling,
