@@ -222,27 +222,30 @@ pub mod reader {
         pub pressure_max: i32,
     }
 
-    const IOC_READ: libc::c_ulong = 2;
+    const IOC_READ: u64 = 2;
 
-    fn ioc(dir: libc::c_ulong, typ: u8, nr: u8, size: usize) -> libc::c_ulong {
-        (dir << 30)
-            | ((size as libc::c_ulong) << 16)
-            | ((typ as libc::c_ulong) << 8)
-            | (nr as libc::c_ulong)
+    // musl's `ioctl` takes a `c_int` request; glibc's takes a `c_ulong`.
+    #[cfg(target_env = "musl")]
+    type IoctlReq = libc::c_int;
+    #[cfg(not(target_env = "musl"))]
+    type IoctlReq = libc::c_ulong;
+
+    fn ioc(dir: u64, typ: u8, nr: u8, size: usize) -> u64 {
+        (dir << 30) | ((size as u64) << 16) | ((typ as u64) << 8) | (nr as u64)
     }
 
-    fn eviocgname(len: usize) -> libc::c_ulong {
+    fn eviocgname(len: usize) -> u64 {
         ioc(IOC_READ, b'E', 0x06, len)
     }
 
-    fn eviocgabs(axis: u16) -> libc::c_ulong {
+    fn eviocgabs(axis: u16) -> u64 {
         // struct input_absinfo is 6 x i32 = 24 bytes.
         ioc(IOC_READ, b'E', 0x40 + axis as u8, 24)
     }
 
     fn read_name(fd: RawFd) -> String {
         let mut buf = [0u8; 256];
-        let n = unsafe { libc::ioctl(fd, eviocgname(buf.len()), buf.as_mut_ptr()) };
+        let n = unsafe { libc::ioctl(fd, eviocgname(buf.len()) as IoctlReq, buf.as_mut_ptr()) };
         if n <= 0 {
             return String::new();
         }
@@ -253,7 +256,7 @@ pub mod reader {
     fn read_axis(fd: RawFd, axis: u16) -> Option<(AxisRange, i32)> {
         // input_absinfo: value, minimum, maximum, fuzz, flat, resolution.
         let mut info = [0i32; 6];
-        let rc = unsafe { libc::ioctl(fd, eviocgabs(axis), info.as_mut_ptr()) };
+        let rc = unsafe { libc::ioctl(fd, eviocgabs(axis) as IoctlReq, info.as_mut_ptr()) };
         if rc < 0 {
             return None;
         }
