@@ -15,12 +15,17 @@
 //! That tagging is what lets the app route pen samples to ink drawing and
 //! touch samples to view navigation without them interfering with each
 //! other — see `calnotes-app`'s event loop. This app runs as a normal
-//! windowed AppLoad "external QTFB" app, not a full-screen "takeover" app,
-//! so it deliberately does not grab `/dev/input` devices directly (that
-//! would fight with AppLoad's own input routing and the virtual
-//! keyboard).
+//! windowed AppLoad "external QTFB" app, not a full-screen "takeover" app.
+//!
+//! The QTFB host coalesces and drops pen samples between reads, which loses
+//! the slow start of small/fast strokes. To render handwriting faithfully,
+//! [`wacom`] *additionally* reads the pen digitizer device directly (never
+//! grabbing it, so QTFB and the virtual keyboard keep working) and streams
+//! every hardware sample; the app uses those when available and falls back
+//! to QTFB pen events otherwise.
 
 pub mod protocol;
+pub mod wacom;
 
 #[cfg(unix)]
 pub mod qtfb;

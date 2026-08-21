@@ -1561,6 +1561,13 @@ impl App {
                     self.offset_editor = None;
                 }
                 self.status = "USE APPLOAD KEYBOARD BUTTON".to_string();
+                return;
+            }
+        }
+        if let Some(rect) = layout.raw_pen_button {
+            if within(rect, x, y) {
+                self.state.config.raw_pen_input = !self.state.config.raw_pen_input;
+                let _ = self.state.save_config();
             }
         }
     }
@@ -1750,6 +1757,7 @@ impl App {
         let mut event_minus_button = None;
         let mut event_plus_button = None;
         let mut event_size_row = None;
+        let mut raw_pen_button = None;
         let mut display_section_y = None;
         if self.editor.is_none() {
             let section_y = y + 112;
@@ -1795,6 +1803,12 @@ impl App {
                 w: 84,
                 h: 84,
             });
+            raw_pen_button = Some(view::Rect {
+                x: 20,
+                y: controls_y + 100,
+                w: 520,
+                h: 84,
+            });
         }
 
         SettingsLayout {
@@ -1814,6 +1828,7 @@ impl App {
             event_minus_button,
             event_plus_button,
             event_size_row,
+            raw_pen_button,
             display_section_y,
         }
     }
@@ -1890,6 +1905,20 @@ impl App {
                 &text,
                 BLACK,
                 BODY_TEXT_SCALE,
+                Font::Ui,
+            );
+        }
+        if let Some(rect) = layout.raw_pen_button {
+            let mode = if self.state.config.raw_pen_input {
+                "RAW (smooth)"
+            } else {
+                "QTFB (fallback)"
+            };
+            draw_button(
+                fb,
+                rect,
+                &format!("PEN INPUT: {mode}"),
+                self.state.config.raw_pen_input,
                 Font::Ui,
             );
         }
@@ -2578,6 +2607,7 @@ struct SettingsLayout {
     event_minus_button: Option<view::Rect>,
     event_plus_button: Option<view::Rect>,
     event_size_row: Option<view::Rect>,
+    raw_pen_button: Option<view::Rect>,
     /// Top-left of the "Display" section, for the section's heading text.
     display_section_y: Option<i32>,
 }
