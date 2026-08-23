@@ -50,8 +50,8 @@ predeinstall() {
 	fi
 }
 
-# Placeholders until v0.1.26 is published and checksums are recorded.
+# Checksums recorded from the published v0.1.26 release.
 sha512sums="
-PLACEHOLDER-ALLINONE-ZIP  remarkable-calendar-notes-0.1.26.zip
-PLACEHOLDER-LICENSE  LICENSE
+3801872d840887c1c24e488f217dd4a9b10bb04eec3702a96f8eab97f6f5cff42838a373cc87c6dd3e4eb35994928ce84e21b20cedb5b3816a90bc478255a728  remarkable-calendar-notes-0.1.26.zip
+9f39ea5e24a0eaf3f0e3217170cded95184fe8a6f179d4d19c4c11c110e5be135be23d7edb0b3cec093d1a4ea93ffec753f4b8fcf9b0ac1fc5856f7a95f13773  LICENSE
 "
