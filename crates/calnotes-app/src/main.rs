@@ -233,6 +233,12 @@ mod device_loop {
         moved: bool,
         invalid: bool,
         active_points: u32,
+        /// Whether the initial contact landed on interactive chrome (a
+        /// toolbar button or the settings screen). UI taps are now confirmed
+        /// on release, so a downward flick that begins on the top toolbar is
+        /// recognised as a swipe and passed through to AppLoad's
+        /// close-window gesture instead of firing a button.
+        ui: bool,
     }
 
     /// The device's real display sink: QTFB shared memory plus its update
@@ -390,6 +396,15 @@ mod device_loop {
         // hit a toolbar/settings control).
         let mut raw_writing = false;
 
+        // Pen ink drawn but not yet pushed to the display, and when it was
+        // last pushed. While writing, on-screen updates are throttled to
+        // `pen_refresh_ms` so the display host is never flooded with more
+        // repaint requests than it can drain — the flood is what made a fast
+        // stroke stall and then "catch up". Ink itself is always captured;
+        // this only coalesces the screen refresh.
+        let mut pending_pen_dirty: Option<Rect> = None;
+        let mut last_pen_publish = Instant::now();
+
         loop {
             let had_events;
             match sink.0.poll_events() {
@@ -407,31 +422,36 @@ mod device_loop {
                     for ev in events {
                         match ev.kind {
                             input_kind::TOUCH_PRESS => {
-                                if app.touch_hits_ui(ev.x, ev.y) {
-                                    // Buttons and settings react immediately to
-                                    // a finger, as they always did — palm
-                                    // rejection is only for the writing area.
-                                    app.handle_touch_tap(ev.x, ev.y);
-                                    needs_full_redraw = true;
-                                    touch = None;
-                                } else {
-                                    match touch.as_mut() {
-                                        None => {
-                                            touch = Some(TouchTrack {
-                                                start_x: ev.x,
-                                                start_y: ev.y,
-                                                start: Instant::now(),
-                                                moved: false,
-                                                invalid: pen_down,
-                                                active_points: 1,
-                                            });
-                                        }
-                                        // A second simultaneous contact means a
-                                        // palm, not a finger tap.
-                                        Some(track) => {
-                                            track.active_points += 1;
-                                            track.invalid = true;
-                                        }
+                                // Every finger contact — including one that
+                                // lands on a toolbar button — is now
+                                // confirmed on release as a brief, still tap.
+                                // Firing buttons on press used to swallow the
+                                // AppLoad "flick down from the top edge to
+                                // close" gesture (its first touch lands on the
+                                // top view buttons), which both pressed a
+                                // button and left the app holding the
+                                // framebuffer so the next AppLoad app opened
+                                // to a broken window. A downward flick now
+                                // moves past the tap threshold and is ignored
+                                // by us, so AppLoad receives the whole gesture.
+                                let hits_ui = app.touch_hits_ui(ev.x, ev.y);
+                                match touch.as_mut() {
+                                    None => {
+                                        touch = Some(TouchTrack {
+                                            start_x: ev.x,
+                                            start_y: ev.y,
+                                            start: Instant::now(),
+                                            moved: false,
+                                            invalid: pen_down,
+                                            active_points: 1,
+                                            ui: hits_ui,
+                                        });
+                                    }
+                                    // A second simultaneous contact means a
+                                    // palm, not a finger tap.
+                                    Some(track) => {
+                                        track.active_points += 1;
+                                        track.invalid = true;
                                     }
                                 }
                             }
@@ -449,10 +469,17 @@ mod device_loop {
                                     track.active_points = track.active_points.saturating_sub(1);
                                     if track.active_points == 0 {
                                         let track = touch.take().unwrap();
-                                        let is_tap = !track.invalid
-                                            && !track.moved
-                                            && !pen_down
+                                        // A UI tap only needs to be brief and
+                                        // still; a writing-area tap must also
+                                        // not coincide with pen use (palm
+                                        // rejection).
+                                        let brief_still = !track.moved
                                             && track.start.elapsed() <= TAP_MAX_DURATION;
+                                        let is_tap = if track.ui {
+                                            brief_still && !track.invalid
+                                        } else {
+                                            brief_still && !track.invalid && !pen_down
+                                        };
                                         if is_tap {
                                             app.handle_touch_tap(track.start_x, track.start_y);
                                             needs_full_redraw = true;
@@ -574,21 +601,41 @@ mod device_loop {
                     if needs_full_redraw {
                         // A full redraw repaints the committed ink too, so it
                         // supersedes any accumulated pen rectangle.
+                        pending_pen_dirty = None;
                         if !redraw(sink, &app, fb, "input") {
                             return show_fatal_screen(sink, "DISPLAY ERROR", "INPUT REDRAW FAILED");
                         }
-                    } else if let Some(rect) = pen_dirty {
-                        // One partial update for the whole burst drawn this
-                        // cycle.
-                        match display::publish_rect(sink, fb, rect) {
-                            Ok(_) => {}
-                            Err(e) => {
-                                super::diagnostics::log(format_args!("partial update failed: {e}"));
-                                return show_fatal_screen(
-                                    sink,
-                                    "DISPLAY ERROR",
-                                    "PARTIAL UPDATE FAILED",
-                                );
+                    } else {
+                        // Fold this cycle's freshly-drawn ink into whatever is
+                        // still waiting to be shown.
+                        if let Some(rect) = pen_dirty {
+                            pending_pen_dirty = Some(match pending_pen_dirty {
+                                Some(acc) => display::union_rect(acc, rect),
+                                None => rect,
+                            });
+                        }
+                        // Publish immediately once the stroke ends; while it
+                        // is still going, throttle to pen_refresh_ms.
+                        let writing = pen_down || raw_writing;
+                        let interval =
+                            Duration::from_millis(app.state.config.pen_refresh_ms_clamped() as u64);
+                        if let Some(rect) = pending_pen_dirty {
+                            if !writing || last_pen_publish.elapsed() >= interval {
+                                match display::publish_rect(sink, fb, rect) {
+                                    Ok(_) => {}
+                                    Err(e) => {
+                                        super::diagnostics::log(format_args!(
+                                            "partial update failed: {e}"
+                                        ));
+                                        return show_fatal_screen(
+                                            sink,
+                                            "DISPLAY ERROR",
+                                            "PARTIAL UPDATE FAILED",
+                                        );
+                                    }
+                                }
+                                pending_pen_dirty = None;
+                                last_pen_publish = Instant::now();
                             }
                         }
                     }
@@ -600,36 +647,49 @@ mod device_loop {
                 }
             }
 
-            // Background refresh / Google login results are applied here;
-            // neither ever blocks this loop.
-            if app.poll_background() {
-                super::diagnostics::log(format_args!("background update: {}", app.status));
-                if !redraw(sink, &app, fb, "background") {
-                    return show_fatal_screen(sink, "DISPLAY ERROR", "BACKGROUND REDRAW FAILED");
+            // While a stroke is in progress, defer every heavy full-redraw
+            // (background refresh results, the periodic auto-refresh, and the
+            // startup repaints). A full re-render mid-stroke blocks the loop
+            // long enough for pen samples to pile up and the ink to appear in
+            // a late burst; running them only between strokes keeps writing
+            // smooth without dropping any updates.
+            let writing = pen_down || raw_writing;
+            if !writing {
+                // Background refresh / Google login results are applied here;
+                // neither ever blocks this loop.
+                if app.poll_background() {
+                    super::diagnostics::log(format_args!("background update: {}", app.status));
+                    if !redraw(sink, &app, fb, "background") {
+                        return show_fatal_screen(
+                            sink,
+                            "DISPLAY ERROR",
+                            "BACKGROUND REDRAW FAILED",
+                        );
+                    }
                 }
-            }
 
-            if last_refresh.elapsed() >= AUTO_REFRESH_INTERVAL {
-                app.start_refresh();
-                super::diagnostics::log(format_args!("automatic source refresh started"));
-                if !redraw(sink, &app, fb, "automatic refresh") {
-                    return show_fatal_screen(sink, "DISPLAY ERROR", "AUTOMATIC REDRAW FAILED");
+                if last_refresh.elapsed() >= AUTO_REFRESH_INTERVAL {
+                    app.start_refresh();
+                    super::diagnostics::log(format_args!("automatic source refresh started"));
+                    if !redraw(sink, &app, fb, "automatic refresh") {
+                        return show_fatal_screen(sink, "DISPLAY ERROR", "AUTOMATIC REDRAW FAILED");
+                    }
+                    last_refresh = Instant::now();
                 }
-                last_refresh = Instant::now();
-            }
 
-            if startup_repaints_remaining > 0 && Instant::now() >= next_startup_repaint {
-                let attempt = STARTUP_REPAINT_COUNT - startup_repaints_remaining + 1;
-                if !redraw(
-                    sink,
-                    &app,
-                    fb,
-                    &format!("startup repaint {attempt}/{STARTUP_REPAINT_COUNT}"),
-                ) {
-                    return show_fatal_screen(sink, "DISPLAY ERROR", "STARTUP REPAINT FAILED");
+                if startup_repaints_remaining > 0 && Instant::now() >= next_startup_repaint {
+                    let attempt = STARTUP_REPAINT_COUNT - startup_repaints_remaining + 1;
+                    if !redraw(
+                        sink,
+                        &app,
+                        fb,
+                        &format!("startup repaint {attempt}/{STARTUP_REPAINT_COUNT}"),
+                    ) {
+                        return show_fatal_screen(sink, "DISPLAY ERROR", "STARTUP REPAINT FAILED");
+                    }
+                    startup_repaints_remaining -= 1;
+                    next_startup_repaint += STARTUP_REPAINT_INTERVAL;
                 }
-                startup_repaints_remaining -= 1;
-                next_startup_repaint += STARTUP_REPAINT_INTERVAL;
             }
 
             // QTFB coalesces/drops pen samples between reads, so how often

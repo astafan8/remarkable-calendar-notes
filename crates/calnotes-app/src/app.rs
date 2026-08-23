@@ -16,7 +16,7 @@
 #![cfg_attr(not(unix), allow(dead_code))]
 
 use calnotes_core::config::AppState;
-use calnotes_core::model::{CalendarSource, Event, SourceKind, SourceStatus, ViewMode};
+use calnotes_core::model::{AppConfig, CalendarSource, Event, SourceKind, SourceStatus, ViewMode};
 use calnotes_core::recurrence::Window;
 use calnotes_core::render::{Font, FrameBuffer, BLACK, GRAY, LIGHT_GRAY, WHITE};
 use calnotes_core::sources::google;
@@ -661,11 +661,23 @@ impl App {
     }
 
     pub fn events_for(&self, date: NaiveDate) -> Vec<&Event> {
-        self.events_cache
-            .values()
-            .flatten()
-            .filter(|e| e.time.dates().contains(&date))
-            .collect()
+        // Iterate sources in their configured order so that same-day events
+        // from different calendars stack in the order the user arranged in
+        // settings (via the up/down reorder buttons).
+        let mut out = Vec::new();
+        for source in &self.state.config.sources {
+            if let Some(events) = self.events_cache.get(&source.id) {
+                out.extend(events.iter().filter(|e| e.time.dates().contains(&date)));
+            }
+        }
+        // Include any cached events whose source is no longer in the list
+        // (defensive: normally cleaned up on delete).
+        for (id, events) in &self.events_cache {
+            if !self.state.config.sources.iter().any(|s| &s.id == id) {
+                out.extend(events.iter().filter(|e| e.time.dates().contains(&date)));
+            }
+        }
+        out
     }
 
     pub fn set_view_mode(&mut self, mode: ViewMode) {
@@ -706,14 +718,15 @@ impl App {
     pub fn undo_current_day(&mut self) {
         while let Some(date) = self.edit_history.pop() {
             if self.state.ink.undo(date) {
-                let _ = self.state.save_ink();
+                let _ = self.state.save_ink_day(date);
                 return;
             }
         }
         // Fall back to the anchor date if nothing is in the session history
         // (e.g. ink drawn in a previous session).
-        if self.state.ink.undo(self.state.config.anchor_date) {
-            let _ = self.state.save_ink();
+        let anchor = self.state.config.anchor_date;
+        if self.state.ink.undo(anchor) {
+            let _ = self.state.save_ink_day(anchor);
         }
     }
 
@@ -727,7 +740,7 @@ impl App {
             .unwrap_or(self.state.config.anchor_date);
         self.state.ink.clear_day(date);
         self.edit_history.push(date);
-        let _ = self.state.save_ink();
+        let _ = self.state.save_ink_day(date);
     }
 
     /// The reference day-cell aspect ratio shared by every view except Two
@@ -1130,6 +1143,11 @@ impl App {
         let Some(active) = self.active_gesture.take() else {
             return false;
         };
+        let edited_date = match &active {
+            ActiveGesture::Draw { date, .. }
+            | ActiveGesture::Erase { date, .. }
+            | ActiveGesture::Lasso { date, .. } => *date,
+        };
         let redraw = match active {
             ActiveGesture::Draw {
                 date, stroke_index, ..
@@ -1161,7 +1179,9 @@ impl App {
                 true
             }
         };
-        let _ = self.state.save_ink();
+        // Persist only the affected day, so save cost stays constant as
+        // notes accumulate across other dates.
+        let _ = self.state.save_ink_day(edited_date);
         redraw
     }
 
@@ -1179,12 +1199,11 @@ impl App {
                 field.apply_key(key);
             }
             // Commit the typed size live (clamped) so the preview updates.
+            // Accept whole or half points (e.g. "3" or "3.5").
             if let Some(field) = &self.event_size_editor {
-                if let Ok(n) = field.text.trim().parse::<i32>() {
-                    self.state.config.event_text_scale = n.clamp(
-                        calnotes_core::model::AppConfig::EVENT_TEXT_SCALE_MIN,
-                        calnotes_core::model::AppConfig::EVENT_TEXT_SCALE_MAX,
-                    );
+                if let Ok(points) = field.text.trim().parse::<f32>() {
+                    let tenths = (points * 10.0).round() as i32;
+                    self.state.config.set_event_text_scale_tenths(tenths);
                     let _ = self.state.save_config();
                 }
             }
@@ -1304,9 +1323,9 @@ impl App {
             // word/letter-wrapped to the cell width; continuation lines are
             // indented one character (a hanging indent) so it is clear where
             // a new event begins. The size is user-configurable.
-            let event_scale = self.state.config.event_text_scale_clamped();
-            let line_h = FrameBuffer::text_height(event_scale, Font::Ui) + 2;
-            let indent = FrameBuffer::text_width("M", event_scale, Font::Ui);
+            let event_scale = self.state.config.event_text_scale_f32();
+            let line_h = FrameBuffer::text_height_scaled(event_scale, Font::Ui) + 2;
+            let indent = FrameBuffer::text_width_scaled("M", event_scale, Font::Ui);
             let avail = (cell.rect.w - 8 - indent).max(1);
             let bottom = cell.rect.y + cell.rect.h;
             let mut text_y = cell.rect.y + 6 + FrameBuffer::text_height(DAY_NUMBER_SCALE, Font::Ui);
@@ -1319,7 +1338,7 @@ impl App {
                         break 'events;
                     }
                     let x = cell.rect.x + 4 + if i == 0 { 0 } else { indent };
-                    fb.draw_text(x, text_y, line, BLACK, event_scale, Font::Ui);
+                    fb.draw_text_scaled(x, text_y, line, BLACK, event_scale, Font::Ui);
                     text_y += line_h;
                 }
             }
@@ -1359,6 +1378,20 @@ impl App {
             return;
         }
         for row in &layout.source_rows {
+            if within(row.move_up, x, y) {
+                if row.index > 0 {
+                    self.state.config.sources.swap(row.index, row.index - 1);
+                    let _ = self.state.save_config();
+                }
+                return;
+            }
+            if within(row.move_down, x, y) {
+                if row.index + 1 < self.state.config.sources.len() {
+                    self.state.config.sources.swap(row.index, row.index + 1);
+                    let _ = self.state.save_config();
+                }
+                return;
+            }
             if within(row.delete, x, y) {
                 let id = self.state.config.sources[row.index].id.clone();
                 self.state.config.sources.remove(row.index);
@@ -1542,22 +1575,21 @@ impl App {
         }
         if let Some(rect) = layout.event_minus_button {
             if within(rect, x, y) {
-                self.adjust_event_text_scale(-1);
+                self.adjust_event_text_scale(-AppConfig::EVENT_TEXT_SCALE_TENTHS_STEP);
                 return;
             }
         }
         if let Some(rect) = layout.event_plus_button {
             if within(rect, x, y) {
-                self.adjust_event_text_scale(1);
+                self.adjust_event_text_scale(AppConfig::EVENT_TEXT_SCALE_TENTHS_STEP);
                 return;
             }
         }
         if let Some(rect) = layout.event_size_row {
             if within(rect, x, y) {
                 if self.event_size_editor.is_none() {
-                    self.event_size_editor = Some(TextField::new(
-                        self.state.config.event_text_scale_clamped().to_string(),
-                    ));
+                    self.event_size_editor =
+                        Some(TextField::new(self.state.config.event_text_scale_label()));
                     self.offset_editor = None;
                 }
                 self.status = "USE APPLOAD KEYBOARD BUTTON".to_string();
@@ -1568,17 +1600,35 @@ impl App {
             if within(rect, x, y) {
                 self.state.config.raw_pen_input = !self.state.config.raw_pen_input;
                 let _ = self.state.save_config();
+                return;
+            }
+        }
+        if let Some(rect) = layout.pen_refresh_minus_button {
+            if within(rect, x, y) {
+                self.adjust_pen_refresh_ms(-AppConfig::PEN_REFRESH_MS_STEP);
+                return;
+            }
+        }
+        if let Some(rect) = layout.pen_refresh_plus_button {
+            if within(rect, x, y) {
+                self.adjust_pen_refresh_ms(AppConfig::PEN_REFRESH_MS_STEP);
             }
         }
     }
 
-    /// Nudge the event text size by `delta`, clamped, and persist it.
-    fn adjust_event_text_scale(&mut self, delta: i32) {
-        let next = (self.state.config.event_text_scale_clamped() + delta).clamp(
-            calnotes_core::model::AppConfig::EVENT_TEXT_SCALE_MIN,
-            calnotes_core::model::AppConfig::EVENT_TEXT_SCALE_MAX,
-        );
-        self.state.config.event_text_scale = next;
+    /// Nudge the pen-refresh throttle by `delta_ms`, clamped, and persist it.
+    fn adjust_pen_refresh_ms(&mut self, delta_ms: i32) {
+        let next = (self.state.config.pen_refresh_ms_clamped() + delta_ms)
+            .clamp(AppConfig::PEN_REFRESH_MS_MIN, AppConfig::PEN_REFRESH_MS_MAX);
+        self.state.config.pen_refresh_ms = next;
+        let _ = self.state.save_config();
+    }
+
+    /// Nudge the event text size by `delta_tenths` tenths of a point,
+    /// clamped, and persist it.
+    fn adjust_event_text_scale(&mut self, delta_tenths: i32) {
+        let next = self.state.config.event_text_scale_tenths_clamped() + delta_tenths;
+        self.state.config.set_event_text_scale_tenths(next);
         self.event_size_editor = None;
         let _ = self.state.save_config();
     }
@@ -1643,12 +1693,28 @@ impl App {
                 };
                 let is_google = matches!(source.kind, SourceKind::GoogleCalendar { .. });
                 let edit_w = if is_google { 660 } else { 500 };
+                // A narrow reorder column on the far left, two stacked
+                // half-height buttons.
+                let reorder_w = 56;
+                let reorder_gap = 8;
                 source_rows.push(SourceRow {
                     index,
-                    edit: view::Rect {
+                    move_up: view::Rect {
                         x: row_rect.x,
                         y: row_rect.y,
-                        w: row_rect.w - edit_w,
+                        w: reorder_w,
+                        h: (row_rect.h - 4) / 2,
+                    },
+                    move_down: view::Rect {
+                        x: row_rect.x,
+                        y: row_rect.y + (row_rect.h - 4) / 2 + 4,
+                        w: reorder_w,
+                        h: (row_rect.h - 4) / 2,
+                    },
+                    edit: view::Rect {
+                        x: row_rect.x + reorder_w + reorder_gap,
+                        y: row_rect.y,
+                        w: row_rect.w - edit_w - reorder_w - reorder_gap,
                         h: row_rect.h,
                     },
                     login: is_google.then_some(view::Rect {
@@ -1758,6 +1824,9 @@ impl App {
         let mut event_plus_button = None;
         let mut event_size_row = None;
         let mut raw_pen_button = None;
+        let mut pen_refresh_minus_button = None;
+        let mut pen_refresh_row = None;
+        let mut pen_refresh_plus_button = None;
         let mut display_section_y = None;
         if self.editor.is_none() {
             let section_y = y + 112;
@@ -1809,6 +1878,25 @@ impl App {
                 w: 520,
                 h: 84,
             });
+            // Pen-refresh throttle stepper, mirroring the event-size stepper.
+            pen_refresh_minus_button = Some(view::Rect {
+                x: 700,
+                y: controls_y + 100,
+                w: 84,
+                h: 84,
+            });
+            pen_refresh_row = Some(view::Rect {
+                x: 792,
+                y: controls_y + 100,
+                w: 220,
+                h: 84,
+            });
+            pen_refresh_plus_button = Some(view::Rect {
+                x: 1020,
+                y: controls_y + 100,
+                w: 84,
+                h: 84,
+            });
         }
 
         SettingsLayout {
@@ -1829,6 +1917,9 @@ impl App {
             event_plus_button,
             event_size_row,
             raw_pen_button,
+            pen_refresh_minus_button,
+            pen_refresh_row,
+            pen_refresh_plus_button,
             display_section_y,
         }
     }
@@ -1897,7 +1988,7 @@ impl App {
             let text = if let Some(field) = &self.event_size_editor {
                 format!("TEXT {}", text_with_cursor(&field.text, field.cursor))
             } else {
-                format!("TEXT {}", self.state.config.event_text_scale_clamped())
+                format!("TEXT {}", self.state.config.event_text_scale_label())
             };
             fb.draw_text(
                 rect.x + 12,
@@ -1919,6 +2010,23 @@ impl App {
                 rect,
                 &format!("PEN INPUT: {mode}"),
                 self.state.config.raw_pen_input,
+                Font::Ui,
+            );
+        }
+        if let Some(rect) = layout.pen_refresh_minus_button {
+            draw_button(fb, rect, "-", false, Font::Ui);
+        }
+        if let Some(rect) = layout.pen_refresh_plus_button {
+            draw_button(fb, rect, "+", false, Font::Ui);
+        }
+        if let Some(rect) = layout.pen_refresh_row {
+            fb.draw_rect_outline(rect, GRAY);
+            fb.draw_text(
+                rect.x + 12,
+                rect.y + 30,
+                &format!("PEN {}ms", self.state.config.pen_refresh_ms_clamped()),
+                BLACK,
+                BODY_TEXT_SCALE,
                 Font::Ui,
             );
         }
@@ -1967,11 +2075,34 @@ impl App {
         }
 
         if self.editor.is_none() {
-            fb.draw_text(20, 222, "Sources", BLACK, BODY_TEXT_SCALE, Font::Ui);
+            let heading = if self.state.config.sources.len() >= 2 {
+                "Sources  (\u{2191}/\u{2193} reorder; order sets same-day event order)"
+            } else {
+                "Sources"
+            };
+            fb.draw_text(20, 222, heading, BLACK, BODY_TEXT_SCALE, Font::Ui);
         }
 
         for row in &layout.source_rows {
             let source = &self.state.config.sources[row.index];
+            // Reorder buttons: the arrow only shows when the move is
+            // possible, so the ends of the list read as disabled.
+            let can_up = row.index > 0;
+            let can_down = row.index + 1 < self.state.config.sources.len();
+            draw_button(
+                fb,
+                row.move_up,
+                if can_up { "\u{2191}" } else { "" },
+                false,
+                Font::Ui,
+            );
+            draw_button(
+                fb,
+                row.move_down,
+                if can_down { "\u{2193}" } else { "" },
+                false,
+                Font::Ui,
+            );
             fb.draw_rect_outline(row.edit, BLACK);
             // Line 1: the source label on its own, so it is always legible
             // and never runs into the status text.
@@ -2085,7 +2216,7 @@ impl App {
                 // Full result/error, wrapped over as many lines as needed in
                 // a smaller font so long messages are entirely readable.
                 let line_h = FrameBuffer::text_height(EVENT_TEXT_SCALE, Font::Ui) + 4;
-                for (i, line) in wrap_text(result, CANVAS_W - 40, EVENT_TEXT_SCALE, Font::Ui)
+                for (i, line) in wrap_text(result, CANVAS_W - 40, EVENT_TEXT_SCALE as f32, Font::Ui)
                     .iter()
                     .enumerate()
                 {
@@ -2147,7 +2278,7 @@ fn full_status_text(status: &SourceStatus) -> String {
 /// fits within `max_width` pixels at `scale` in `font`. Wraps on spaces
 /// where possible and hard-splits any single word (e.g. a long URL) that
 /// is itself wider than one line.
-fn wrap_text(text: &str, max_width: i32, scale: i32, font: Font) -> Vec<String> {
+fn wrap_text(text: &str, max_width: i32, scale: f32, font: Font) -> Vec<String> {
     let mut lines = Vec::new();
     for paragraph in text.split('\n') {
         let mut current = String::new();
@@ -2157,7 +2288,7 @@ fn wrap_text(text: &str, max_width: i32, scale: i32, font: Font) -> Vec<String> 
             } else {
                 format!("{current} {word}")
             };
-            if FrameBuffer::text_width(&candidate, scale, font) <= max_width {
+            if FrameBuffer::text_width_scaled(&candidate, scale, font) <= max_width {
                 current = candidate;
                 continue;
             }
@@ -2169,7 +2300,7 @@ fn wrap_text(text: &str, max_width: i32, scale: i32, font: Font) -> Vec<String> 
             let mut piece = String::new();
             for ch in word.chars() {
                 let trial = format!("{piece}{ch}");
-                if FrameBuffer::text_width(&trial, scale, font) <= max_width {
+                if FrameBuffer::text_width_scaled(&trial, scale, font) <= max_width {
                     piece = trial;
                 } else {
                     if !piece.is_empty() {
@@ -2580,6 +2711,10 @@ fn within(rect: view::Rect, x: i32, y: i32) -> bool {
 
 struct SourceRow {
     index: usize,
+    /// Reorder buttons: move this source up/down in the list. The order also
+    /// determines how same-day events from different sources are stacked.
+    move_up: view::Rect,
+    move_down: view::Rect,
     edit: view::Rect,
     /// "LOG IN" button, present only for Google Calendar sources.
     login: Option<view::Rect>,
@@ -2608,6 +2743,9 @@ struct SettingsLayout {
     event_plus_button: Option<view::Rect>,
     event_size_row: Option<view::Rect>,
     raw_pen_button: Option<view::Rect>,
+    pen_refresh_minus_button: Option<view::Rect>,
+    pen_refresh_row: Option<view::Rect>,
+    pen_refresh_plus_button: Option<view::Rect>,
     /// Top-left of the "Display" section, for the section's heading text.
     display_section_y: Option<i32>,
 }
@@ -2953,16 +3091,20 @@ mod tests {
             }
             assert!(seen_last_used && seen_a_view);
 
-            // Event text size +/- steppers clamp within range.
-            let start = app.state.config.event_text_scale_clamped();
+            // Event text size +/- steppers move by a half point and clamp
+            // within range.
+            let start = app.state.config.event_text_scale_tenths_clamped();
             let layout = app.settings_layout();
             let plus = layout.event_plus_button.unwrap();
             app.handle_touch_tap(plus.x + 5, plus.y + 5);
-            assert_eq!(app.state.config.event_text_scale_clamped(), start + 1);
+            assert_eq!(
+                app.state.config.event_text_scale_tenths_clamped(),
+                start + AppConfig::EVENT_TEXT_SCALE_TENTHS_STEP
+            );
             let layout = app.settings_layout();
             let minus = layout.event_minus_button.unwrap();
             app.handle_touch_tap(minus.x + 5, minus.y + 5);
-            assert_eq!(app.state.config.event_text_scale_clamped(), start);
+            assert_eq!(app.state.config.event_text_scale_tenths_clamped(), start);
         });
     }
 
@@ -3268,7 +3410,7 @@ mod tests {
     #[test]
     fn wrap_text_splits_long_unbroken_text_across_multiple_lines() {
         let long = "x".repeat(400);
-        let lines = wrap_text(&long, 600, EVENT_TEXT_SCALE, Font::Ui);
+        let lines = wrap_text(&long, 600, EVENT_TEXT_SCALE as f32, Font::Ui);
         assert!(lines.len() > 1, "a 400-char string must wrap");
         for line in &lines {
             assert!(
@@ -3333,6 +3475,53 @@ mod tests {
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
             assert!(app.testing_source_id.is_none());
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn reorder_buttons_swap_source_order() {
+        with_temp_data_dir(|| {
+            let mut app = App::new().unwrap();
+            app.screen = Screen::Settings;
+
+            // Add two local .ics sources ("first" then "second").
+            for name in ["first", "second"] {
+                let layout = app.settings_layout();
+                let (_, add) = layout.add_buttons[0];
+                app.handle_touch_tap(add.x + 2, add.y + 2);
+                for c in name.chars() {
+                    app.handle_vkb(c as i32);
+                }
+                app.editor.as_mut().unwrap().handle_key(VkbKey::Tab);
+                for c in format!("/tmp/{name}.ics").chars() {
+                    app.handle_vkb(c as i32);
+                }
+                let layout = app.settings_layout();
+                let save = layout.save_button.unwrap();
+                app.handle_touch_tap(save.x + 2, save.y + 2);
+            }
+            assert_eq!(app.state.config.sources.len(), 2);
+            assert_eq!(app.state.config.sources[0].label, "first");
+
+            // Move the first source down: order becomes second, first.
+            let layout = app.settings_layout();
+            let down = layout.source_rows[0].move_down;
+            app.handle_touch_tap(down.x + 2, down.y + 2);
+            assert_eq!(app.state.config.sources[0].label, "second");
+            assert_eq!(app.state.config.sources[1].label, "first");
+
+            // Move it back up.
+            let layout = app.settings_layout();
+            let up = layout.source_rows[1].move_up;
+            app.handle_touch_tap(up.x + 2, up.y + 2);
+            assert_eq!(app.state.config.sources[0].label, "first");
+
+            // At the ends, the move is a no-op (does not panic or wrap).
+            let layout = app.settings_layout();
+            let up_first = layout.source_rows[0].move_up;
+            app.handle_touch_tap(up_first.x + 2, up_first.y + 2);
+            assert_eq!(app.state.config.sources[0].label, "first");
         });
     }
 
