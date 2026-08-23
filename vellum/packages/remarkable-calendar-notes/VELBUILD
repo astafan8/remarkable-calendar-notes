@@ -1,7 +1,7 @@
 maintainer="astafan8 <astafan8@users.noreply.github.com>"
 status="experimental"
 pkgname=remarkable-calendar-notes
-pkgver=0.1.25
+pkgver=0.1.26
 pkgrel=0
 upstream_author="astafan8"
 category="apps"
@@ -50,8 +50,8 @@ predeinstall() {
 	fi
 }
 
-# Checksums recorded from the published v0.1.25 release.
+# Placeholders until v0.1.26 is published and checksums are recorded.
 sha512sums="
-9891437c18aabb98e16765c2cd9b4837fa3a45f7b3fa91743e86980e90cc672479498124a13d7780c8e4d88568c2f16cf813cad9129d6b4d1c59f67f73b4abf2  remarkable-calendar-notes-0.1.25.zip
-9f39ea5e24a0eaf3f0e3217170cded95184fe8a6f179d4d19c4c11c110e5be135be23d7edb0b3cec093d1a4ea93ffec753f4b8fcf9b0ac1fc5856f7a95f13773  LICENSE
+PLACEHOLDER-ALLINONE-ZIP  remarkable-calendar-notes-0.1.26.zip
+PLACEHOLDER-LICENSE  LICENSE
 "
