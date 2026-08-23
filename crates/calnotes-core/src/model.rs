@@ -221,14 +221,6 @@ pub struct AppConfig {
     /// place on your unit.
     #[serde(default = "default_true")]
     pub raw_pen_input: bool,
-    /// Minimum milliseconds between on-screen updates while a stroke is in
-    /// progress. Ink is always captured losslessly; this only throttles how
-    /// often the screen is refreshed so the display host is never flooded
-    /// with more repaint requests than it can drain (which used to make a
-    /// fast stroke stall and then "catch up"). 0 publishes every poll cycle
-    /// (the old behaviour). Tunable from the settings screen.
-    #[serde(default = "default_pen_refresh_ms")]
-    pub pen_refresh_ms: i32,
 }
 
 impl AppConfig {
@@ -242,17 +234,6 @@ impl AppConfig {
     pub const EVENT_TEXT_SCALE_TENTHS_MIN: i32 = 20;
     pub const EVENT_TEXT_SCALE_TENTHS_MAX: i32 = 60;
     pub const EVENT_TEXT_SCALE_TENTHS_STEP: i32 = 5;
-
-    /// Bounds and step (ms) for the pen-refresh throttle.
-    pub const PEN_REFRESH_MS_MIN: i32 = 0;
-    pub const PEN_REFRESH_MS_MAX: i32 = 50;
-    pub const PEN_REFRESH_MS_STEP: i32 = 2;
-
-    /// The pen-refresh throttle in milliseconds, clamped to a sane range.
-    pub fn pen_refresh_ms_clamped(&self) -> i32 {
-        self.pen_refresh_ms
-            .clamp(Self::PEN_REFRESH_MS_MIN, Self::PEN_REFRESH_MS_MAX)
-    }
 
     /// The event text size, clamped to the supported range.
     pub fn event_text_scale_clamped(&self) -> i32 {
@@ -352,10 +333,6 @@ fn default_true() -> bool {
     true
 }
 
-fn default_pen_refresh_ms() -> i32 {
-    12
-}
-
 /// Sentinel for "no anchor chosen yet". Any date before 2000 is treated as
 /// unset by the app (see `App::new`), so this can never be confused with a
 /// date a user actually navigated to.
@@ -381,7 +358,6 @@ impl Default for AppConfig {
             default_view: default_view_mode(),
             startup_last_used: false,
             raw_pen_input: true,
-            pen_refresh_ms: default_pen_refresh_ms(),
         }
     }
 }
