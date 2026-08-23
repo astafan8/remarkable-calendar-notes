@@ -125,6 +125,8 @@ optional — it's assumed — and leading/trailing spaces are ignored), tap
   supported OS/device versions.
 - [docs/LIMITATIONS.md](docs/LIMITATIONS.md) — pen latency, timezone
   handling, and other known limitations.
+- [docs/PEN_RESEARCH.md](docs/PEN_RESEARCH.md) — survey of reMarkable pen
+  approaches and ranked recommendations for further latency work.
 
 ## License
 

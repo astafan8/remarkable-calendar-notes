@@ -314,7 +314,10 @@ pub fn navigate(view: ViewMode, anchor: NaiveDate, delta: i32) -> NaiveDate {
     match view {
         ViewMode::Day => anchor + Duration::days(delta as i64),
         ViewMode::Week | ViewMode::WorkWeek => anchor + Duration::days(7 * delta as i64),
-        ViewMode::TwoWeeks => anchor + Duration::days(14 * delta as i64),
+        // A two-week page shows the anchor week plus the next; PREV/NEXT
+        // slide the window by a single week so consecutive pages overlap by
+        // one week rather than jumping past a week (mirrors Two Months).
+        ViewMode::TwoWeeks => anchor + Duration::days(7 * delta as i64),
         ViewMode::Month => {
             let total = anchor.year() * 12 + (anchor.month() as i32 - 1) + delta;
             let year = total.div_euclid(12);
@@ -582,6 +585,16 @@ mod tests {
         let next = navigate(ViewMode::Week, d(2026, 3, 18), 1);
         assert_eq!(next, d(2026, 3, 25));
         let prev = navigate(ViewMode::Week, d(2026, 3, 18), -1);
+        assert_eq!(prev, d(2026, 3, 11));
+    }
+
+    #[test]
+    fn navigate_two_weeks_moves_by_a_single_week() {
+        // Two-week pages slide one week at a time so consecutive pages
+        // overlap by a week, matching the Two Months behaviour.
+        let next = navigate(ViewMode::TwoWeeks, d(2026, 3, 18), 1);
+        assert_eq!(next, d(2026, 3, 25));
+        let prev = navigate(ViewMode::TwoWeeks, d(2026, 3, 18), -1);
         assert_eq!(prev, d(2026, 3, 11));
     }
 }

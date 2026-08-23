@@ -218,7 +218,28 @@ impl FrameBuffer {
     pub fn draw_text(&mut self, x: i32, y: i32, text: &str, gray: u8, scale: i32, font: Font) {
         match font {
             Font::Bitmap => self.draw_text_bitmap(x, y, text, gray, scale),
-            Font::Ui => self.draw_text_ui(x, y, text, gray, scale),
+            Font::Ui => {
+                self.draw_text_ui_px(x, y, text, gray, (scale.max(1) as f32) * PX_PER_SCALE)
+            }
+        }
+    }
+
+    /// Like [`FrameBuffer::draw_text`] but accepting a *fractional* scale, so
+    /// the anti-aliased `Ui` font can render half-point sizes (e.g. 3.5).
+    /// The `Bitmap` font has no sub-integer sizes, so it rounds to the
+    /// nearest whole scale.
+    pub fn draw_text_scaled(
+        &mut self,
+        x: i32,
+        y: i32,
+        text: &str,
+        gray: u8,
+        scale: f32,
+        font: Font,
+    ) {
+        match font {
+            Font::Bitmap => self.draw_text_bitmap(x, y, text, gray, scale.round().max(1.0) as i32),
+            Font::Ui => self.draw_text_ui_px(x, y, text, gray, scale.max(0.1) * PX_PER_SCALE),
         }
     }
 
@@ -246,9 +267,9 @@ impl FrameBuffer {
         }
     }
 
-    fn draw_text_ui(&mut self, x: i32, y: i32, text: &str, gray: u8, scale: i32) {
+    fn draw_text_ui_px(&mut self, x: i32, y: i32, text: &str, gray: u8, px: f32) {
         use ab_glyph::{Font as _, ScaleFont};
-        let px = (scale.max(1) as f32) * PX_PER_SCALE;
+        let px = px.max(1.0);
         let font = ui_font();
         let scaled = font.as_scaled(px);
         let baseline = y as f32 + scaled.ascent();
@@ -275,11 +296,16 @@ impl FrameBuffer {
 
     /// Pixel width `draw_text` would occupy for `text` at `scale` in `font`.
     pub fn text_width(text: &str, scale: i32, font: Font) -> i32 {
+        Self::text_width_scaled(text, scale.max(1) as f32, font)
+    }
+
+    /// Like [`FrameBuffer::text_width`] but accepting a fractional scale.
+    pub fn text_width_scaled(text: &str, scale: f32, font: Font) -> i32 {
         match font {
-            Font::Bitmap => text.chars().count() as i32 * 4 * scale,
+            Font::Bitmap => text.chars().count() as i32 * 4 * scale.round().max(1.0) as i32,
             Font::Ui => {
                 use ab_glyph::{Font as _, ScaleFont};
-                let px = (scale.max(1) as f32) * PX_PER_SCALE;
+                let px = scale.max(0.1) * PX_PER_SCALE;
                 let scaled = ui_font().as_scaled(px);
                 let mut width = 0.0f32;
                 let mut previous: Option<ab_glyph::GlyphId> = None;
@@ -299,13 +325,18 @@ impl FrameBuffer {
     /// The vertical space one line of `scale`-sized text occupies in `font`,
     /// used to position and stack text.
     pub fn text_height(scale: i32, font: Font) -> i32 {
+        Self::text_height_scaled(scale.max(1) as f32, font)
+    }
+
+    /// Like [`FrameBuffer::text_height`] but accepting a fractional scale.
+    pub fn text_height_scaled(scale: f32, font: Font) -> i32 {
         match font {
             // 5 glyph rows plus two rows of leading, matching how the bitmap
             // font stacks vertically.
-            Font::Bitmap => 7 * scale,
+            Font::Bitmap => 7 * scale.round().max(1.0) as i32,
             Font::Ui => {
                 use ab_glyph::{Font as _, ScaleFont};
-                let px = (scale.max(1) as f32) * PX_PER_SCALE;
+                let px = scale.max(0.1) * PX_PER_SCALE;
                 ui_font().as_scaled(px).height().ceil() as i32
             }
         }

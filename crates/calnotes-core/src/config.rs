@@ -4,15 +4,26 @@
 //! synthesizes sensible defaults on first run, and every field is editable
 //! from the in-app settings/source-editor screen (see `calnotes-app`).
 
-use crate::ink::InkStore;
+use crate::ink::{DayNotes, InkStore};
 use crate::model::AppConfig;
 use crate::persistence;
+use chrono::NaiveDate;
 use serde::de::DeserializeOwned;
 use std::io;
 use std::path::{Path, PathBuf};
 
 const CONFIG_FILE: &str = "config.json";
+/// Legacy single-file ink store, migrated to the per-day directory on load.
 const INK_FILE: &str = "ink.json";
+/// Per-day ink store: `ink/<YYYY-MM-DD>.json`. Splitting the store one file
+/// per date means a single stroke only rewrites that day's (small) file
+/// instead of re-serializing every stroke ever drawn, which is what made the
+/// app slow down as notes accumulated.
+const INK_DIR: &str = "ink";
+
+fn day_file_name(date: NaiveDate) -> String {
+    format!("{date}.json")
+}
 
 pub struct AppState {
     pub config: AppConfig,
@@ -51,7 +62,7 @@ impl AppState {
         };
         let mut load_warnings = Vec::new();
         let config = load_section(&dir.join(CONFIG_FILE), CONFIG_FILE, &mut load_warnings);
-        let ink = load_section(&dir.join(INK_FILE), INK_FILE, &mut load_warnings);
+        let ink = load_ink(&dir, &mut load_warnings);
         Ok(AppState {
             config,
             ink,
@@ -64,9 +75,60 @@ impl AppState {
         persistence::write_json_atomic(&dir.join(CONFIG_FILE), &self.config)
     }
 
+    /// Persist just one date's notes — the hot path called on every pen-up,
+    /// erase, lasso, clear, and undo. Writing a single day's file keeps the
+    /// cost independent of how much ink exists across all other dates. An
+    /// empty day removes its file.
+    pub fn save_ink_day(&self, date: NaiveDate) -> io::Result<()> {
+        let dir = persistence::data_dir()?.join(INK_DIR);
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join(day_file_name(date));
+        match self.ink.days.get(&date) {
+            Some(notes) if !notes.strokes.is_empty() => {
+                persistence::write_json_atomic(&path, notes)
+            }
+            _ => match std::fs::remove_file(&path) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(e),
+            },
+        }
+    }
+
+    /// Persist the whole ink store as per-day files, pruning files for dates
+    /// that no longer have any ink. Used by tests and any bulk save; the
+    /// per-stroke hot path uses [`AppState::save_ink_day`] instead.
     pub fn save_ink(&self) -> io::Result<()> {
-        let dir = persistence::data_dir()?;
-        persistence::write_json_atomic(&dir.join(INK_FILE), &self.ink)
+        let dir = persistence::data_dir()?.join(INK_DIR);
+        std::fs::create_dir_all(&dir)?;
+        // Remove day files whose date is gone or empty.
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                    continue;
+                }
+                let keep = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .and_then(|stem| NaiveDate::parse_from_str(stem, "%Y-%m-%d").ok())
+                    .is_some_and(|date| {
+                        self.ink
+                            .days
+                            .get(&date)
+                            .is_some_and(|n| !n.strokes.is_empty())
+                    });
+                if !keep {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+        for (date, notes) in &self.ink.days {
+            if !notes.strokes.is_empty() {
+                persistence::write_json_atomic(&dir.join(day_file_name(*date)), notes)?;
+            }
+        }
+        Ok(())
     }
 
     /// Where per-source offline event caches live:
@@ -105,6 +167,73 @@ fn load_section<T: DeserializeOwned + Default>(
             T::default()
         }
     }
+}
+
+/// Load the ink store from the per-day directory, first migrating a legacy
+/// single-file `ink.json` (from older versions) into per-day files. Missing
+/// or corrupt individual day files are skipped with a warning rather than
+/// failing the whole load.
+fn load_ink(dir: &Path, warnings: &mut Vec<String>) -> InkStore {
+    let ink_dir = dir.join(INK_DIR);
+
+    // One-time migration: fold a legacy single-file store into per-day files,
+    // then retire the old file so it is not re-read next launch.
+    let legacy_path = dir.join(INK_FILE);
+    if legacy_path.exists() {
+        let legacy: InkStore = load_section(&legacy_path, INK_FILE, warnings);
+        let _ = std::fs::create_dir_all(&ink_dir);
+        for (date, notes) in &legacy.days {
+            if !notes.strokes.is_empty() {
+                let _ = persistence::write_json_atomic(&ink_dir.join(day_file_name(*date)), notes);
+            }
+        }
+        let _ = std::fs::rename(&legacy_path, legacy_path.with_extension("json.migrated"));
+    }
+
+    let mut store = InkStore::default();
+    let entries = match std::fs::read_dir(&ink_dir) {
+        Ok(entries) => entries,
+        // No ink yet (fresh install) — an empty store is correct.
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return store,
+        Err(e) => {
+            warnings.push(format!("{INK_DIR} could not be listed ({e}); using no ink"));
+            return store;
+        }
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(date) = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .and_then(|stem| NaiveDate::parse_from_str(stem, "%Y-%m-%d").ok())
+        else {
+            continue;
+        };
+        match persistence::read_json_recovering::<DayNotes>(&path) {
+            Ok(recovered) => {
+                if let Some(error) = recovered.error {
+                    let backup = recovered
+                        .recovered_from
+                        .unwrap_or_else(|| "not preserved".to_string());
+                    warnings.push(format!(
+                        "ink for {date} could not be read ({error}); skipped, previous file kept at {backup}"
+                    ));
+                }
+                if let Some(notes) = recovered.value {
+                    if !notes.strokes.is_empty() {
+                        store.days.insert(date, notes);
+                    }
+                }
+            }
+            Err(e) => warnings.push(format!(
+                "ink for {date} could not be accessed ({e}); skipped"
+            )),
+        }
+    }
+    store
 }
 
 /// Mask a secret (password, token, client secret) for display in the
@@ -176,6 +305,90 @@ mod tests {
         let reloaded = AppState::load().unwrap();
         assert_eq!(reloaded.config.utc_offset_minutes, -300);
         assert_eq!(reloaded.ink.days.len(), 1);
+        std::env::remove_var(persistence::DATA_DIR_ENV);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn save_ink_day_writes_one_file_per_date_and_prunes_empty_days() {
+        use crate::ink::NormPoint;
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var(persistence::DATA_DIR_ENV, dir.path());
+
+        let day = chrono::NaiveDate::from_ymd_opt(2026, 5, 4).unwrap();
+        let other = chrono::NaiveDate::from_ymd_opt(2026, 5, 5).unwrap();
+        let mut state = AppState::load().unwrap();
+        for date in [day, other] {
+            let idx = state.ink.begin_stroke(date);
+            for (x, y) in [(0.1, 0.1), (0.2, 0.2)] {
+                state.ink.push_point(
+                    date,
+                    idx,
+                    NormPoint {
+                        x,
+                        y,
+                        pressure: 1.0,
+                    },
+                );
+            }
+            state.save_ink_day(date).unwrap();
+        }
+
+        // Exactly one file per date under ink/.
+        let ink_dir = dir.path().join(INK_DIR);
+        assert!(ink_dir.join("2026-05-04.json").exists());
+        assert!(ink_dir.join("2026-05-05.json").exists());
+
+        // Reload sees both days.
+        let reloaded = AppState::load().unwrap();
+        assert_eq!(reloaded.ink.days.len(), 2);
+
+        // Clearing a day removes just its file, leaving the other intact.
+        let mut state = reloaded;
+        state.ink.clear_day(day);
+        state.save_ink_day(day).unwrap();
+        assert!(!ink_dir.join("2026-05-04.json").exists());
+        assert!(ink_dir.join("2026-05-05.json").exists());
+        assert_eq!(AppState::load().unwrap().ink.days.len(), 1);
+
+        std::env::remove_var(persistence::DATA_DIR_ENV);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn legacy_single_file_ink_is_migrated_to_per_day_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var(persistence::DATA_DIR_ENV, dir.path());
+        // A legacy ink.json written by an older version.
+        std::fs::write(
+            dir.path().join(INK_FILE),
+            r#"{
+                "days": {
+                    "2026-06-01": {"strokes": [{"points": [
+                        {"x": 0.1, "y": 0.2, "pressure": 1.0},
+                        {"x": 0.3, "y": 0.4, "pressure": 1.0}
+                    ]}]},
+                    "2026-06-02": {"strokes": [{"points": [
+                        {"x": 0.5, "y": 0.6, "pressure": 1.0},
+                        {"x": 0.7, "y": 0.8, "pressure": 1.0}
+                    ]}]}
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let state = AppState::load().unwrap();
+        assert_eq!(state.ink.days.len(), 2);
+
+        // The per-day files now exist and the legacy file has been retired.
+        let ink_dir = dir.path().join(INK_DIR);
+        assert!(ink_dir.join("2026-06-01.json").exists());
+        assert!(ink_dir.join("2026-06-02.json").exists());
+        assert!(!dir.path().join(INK_FILE).exists());
+        assert!(dir.path().join("ink.json.migrated").exists());
+
+        // A second load (no legacy file) still sees the migrated ink.
+        assert_eq!(AppState::load().unwrap().ink.days.len(), 2);
         std::env::remove_var(persistence::DATA_DIR_ENV);
     }
 

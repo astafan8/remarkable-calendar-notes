@@ -194,8 +194,18 @@ pub struct AppConfig {
     /// Text size for calendar event summaries inside a day cell. A larger
     /// number is bigger; clamped to a sane range by
     /// [`AppConfig::event_text_scale_clamped`].
+    ///
+    /// Kept for backward compatibility: it stores the whole-point size and
+    /// is mirrored from [`AppConfig::event_text_scale_tenths`] so that older
+    /// builds (which only understand whole points) still read a sane value.
     #[serde(default = "default_event_text_scale")]
     pub event_text_scale: i32,
+    /// Text size for calendar event summaries in *tenths* of a point, so
+    /// half-point sizes (e.g. 25 = 2.5, 35 = 3.5) are possible. When absent
+    /// (older config) the whole-point [`AppConfig::event_text_scale`] is
+    /// used. Clamped by [`AppConfig::event_text_scale_tenths_clamped`].
+    #[serde(default)]
+    pub event_text_scale_tenths: Option<i32>,
     /// The view the app opens on at startup. Clamped to a currently-visible
     /// view by [`AppConfig::startup_view`]. Ignored when
     /// [`AppConfig::startup_last_used`] is set.
@@ -211,6 +221,14 @@ pub struct AppConfig {
     /// place on your unit.
     #[serde(default = "default_true")]
     pub raw_pen_input: bool,
+    /// Minimum milliseconds between on-screen updates while a stroke is in
+    /// progress. Ink is always captured losslessly; this only throttles how
+    /// often the screen is refreshed so the display host is never flooded
+    /// with more repaint requests than it can drain (which used to make a
+    /// fast stroke stall and then "catch up"). 0 publishes every poll cycle
+    /// (the old behaviour). Tunable from the settings screen.
+    #[serde(default = "default_pen_refresh_ms")]
+    pub pen_refresh_ms: i32,
 }
 
 impl AppConfig {
@@ -219,10 +237,68 @@ impl AppConfig {
     pub const EVENT_TEXT_SCALE_MIN: i32 = 2;
     pub const EVENT_TEXT_SCALE_MAX: i32 = 6;
 
+    /// The same bounds expressed in tenths of a point, plus the step used by
+    /// the +/- buttons (half a point).
+    pub const EVENT_TEXT_SCALE_TENTHS_MIN: i32 = 20;
+    pub const EVENT_TEXT_SCALE_TENTHS_MAX: i32 = 60;
+    pub const EVENT_TEXT_SCALE_TENTHS_STEP: i32 = 5;
+
+    /// Bounds and step (ms) for the pen-refresh throttle.
+    pub const PEN_REFRESH_MS_MIN: i32 = 0;
+    pub const PEN_REFRESH_MS_MAX: i32 = 50;
+    pub const PEN_REFRESH_MS_STEP: i32 = 2;
+
+    /// The pen-refresh throttle in milliseconds, clamped to a sane range.
+    pub fn pen_refresh_ms_clamped(&self) -> i32 {
+        self.pen_refresh_ms
+            .clamp(Self::PEN_REFRESH_MS_MIN, Self::PEN_REFRESH_MS_MAX)
+    }
+
     /// The event text size, clamped to the supported range.
     pub fn event_text_scale_clamped(&self) -> i32 {
         self.event_text_scale
             .clamp(Self::EVENT_TEXT_SCALE_MIN, Self::EVENT_TEXT_SCALE_MAX)
+    }
+
+    /// The event text size in tenths of a point, clamped to the supported
+    /// range. Falls back to the whole-point value for configs written before
+    /// half-point sizes existed.
+    pub fn event_text_scale_tenths_clamped(&self) -> i32 {
+        self.event_text_scale_tenths
+            .unwrap_or(self.event_text_scale_clamped() * 10)
+            .clamp(
+                Self::EVENT_TEXT_SCALE_TENTHS_MIN,
+                Self::EVENT_TEXT_SCALE_TENTHS_MAX,
+            )
+    }
+
+    /// The event text size as a fractional point value used by the renderer.
+    pub fn event_text_scale_f32(&self) -> f32 {
+        self.event_text_scale_tenths_clamped() as f32 / 10.0
+    }
+
+    /// A human-readable label for the current size, e.g. "3" or "3.5".
+    pub fn event_text_scale_label(&self) -> String {
+        let tenths = self.event_text_scale_tenths_clamped();
+        if tenths % 10 == 0 {
+            (tenths / 10).to_string()
+        } else {
+            format!("{}.{}", tenths / 10, tenths % 10)
+        }
+    }
+
+    /// Set the event text size from a value in tenths of a point, clamping
+    /// to the supported range and keeping the legacy whole-point field in
+    /// sync so older builds stay sane.
+    pub fn set_event_text_scale_tenths(&mut self, tenths: i32) {
+        let clamped = tenths.clamp(
+            Self::EVENT_TEXT_SCALE_TENTHS_MIN,
+            Self::EVENT_TEXT_SCALE_TENTHS_MAX,
+        );
+        self.event_text_scale_tenths = Some(clamped);
+        // Round to the nearest whole point for the legacy field.
+        self.event_text_scale =
+            ((clamped + 5) / 10).clamp(Self::EVENT_TEXT_SCALE_MIN, Self::EVENT_TEXT_SCALE_MAX);
     }
 
     /// The views to show as buttons, in order — de-duplicated, and falling
@@ -276,6 +352,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_pen_refresh_ms() -> i32 {
+    12
+}
+
 /// Sentinel for "no anchor chosen yet". Any date before 2000 is treated as
 /// unset by the app (see `App::new`), so this can never be confused with a
 /// date a user actually navigated to.
@@ -297,9 +377,11 @@ impl Default for AppConfig {
             anchor_date: unset_anchor(),
             visible_views: default_visible_views(),
             event_text_scale: default_event_text_scale(),
+            event_text_scale_tenths: None,
             default_view: default_view_mode(),
             startup_last_used: false,
             raw_pen_input: true,
+            pen_refresh_ms: default_pen_refresh_ms(),
         }
     }
 }
@@ -411,6 +493,37 @@ mod tests {
         assert_eq!(
             config.event_text_scale_clamped(),
             AppConfig::EVENT_TEXT_SCALE_MIN
+        );
+    }
+
+    #[test]
+    fn event_text_scale_tenths_supports_half_points_and_migrates_old_configs() {
+        // A config without the tenths field falls back to the whole-point
+        // value (3 -> 3.0).
+        let legacy: AppConfig = serde_json::from_str(r#"{"event_text_scale":4}"#).unwrap();
+        assert_eq!(legacy.event_text_scale_tenths_clamped(), 40);
+        assert_eq!(legacy.event_text_scale_f32(), 4.0);
+        assert_eq!(legacy.event_text_scale_label(), "4");
+
+        // Setting a half-point value clamps, labels, and mirrors the legacy
+        // whole-point field.
+        let mut config = AppConfig::default();
+        config.set_event_text_scale_tenths(35);
+        assert_eq!(config.event_text_scale_tenths_clamped(), 35);
+        assert_eq!(config.event_text_scale_f32(), 3.5);
+        assert_eq!(config.event_text_scale_label(), "3.5");
+        assert_eq!(config.event_text_scale, 4); // nearest whole point
+
+        // Out-of-range values clamp to the supported tenths bounds.
+        config.set_event_text_scale_tenths(1000);
+        assert_eq!(
+            config.event_text_scale_tenths_clamped(),
+            AppConfig::EVENT_TEXT_SCALE_TENTHS_MAX
+        );
+        config.set_event_text_scale_tenths(0);
+        assert_eq!(
+            config.event_text_scale_tenths_clamped(),
+            AppConfig::EVENT_TEXT_SCALE_TENTHS_MIN
         );
     }
 
