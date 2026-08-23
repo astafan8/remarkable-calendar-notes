@@ -92,6 +92,37 @@ Even with all of that, expect visibly more latency than xochitl's own
 handwriting, especially during fast strokes. This is a platform ceiling,
 not a bug in this app.
 
+## Opening another AppLoad app afterwards can fail (upstream AppLoad bug)
+
+On some setups, after you use *any* external AppLoad/QTFB app and close
+it, opening the **next** AppLoad app shows only a small, displaced,
+unresponsive window bar (e.g. `> Window`) and the app never appears —
+until xochitl is restarted.
+
+**This is an upstream rm-appload bug, not a bug in this app**
+([asivery/rm-appload#47](https://github.com/asivery/rm-appload/issues/47)).
+It is reproducible with KOReader alone. AppLoad's own logs show the
+external app's framebuffer is torn down cleanly when it exits
+(`Disassociating framebuffer …`, `Unregistered framebuffer controller
+ID …`); the failure is then in AppLoad's *launcher* QML, which throws
+`Cannot assign [undefined] to QString` at `appload.qml:58` and cannot
+open the next app. Nothing the external app does on exit prevents it —
+this app already exits cleanly (its `QtfbClient` sends `TERMINATE`,
+unmaps the shared framebuffer, and closes the socket; the QUIT button and
+AppLoad's own close gesture both take that clean path).
+
+**Workaround:** restart xochitl instead of rebooting the whole device.
+Over SSH:
+
+```
+systemctl restart xochitl
+```
+
+That resets AppLoad's QTFB/launcher state in a few seconds (the screen
+flashes and xochitl reloads) and external apps launch normally again.
+Keeping `xovi` / `rm-appload` updated is the real fix — the bug is being
+tracked upstream.
+
 ## The optional sidebar launcher patches xochitl
 
 The standard app is launched from **AppLoad** and does not modify

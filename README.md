@@ -106,6 +106,19 @@ optional — it's assumed — and leading/trailing spaces are ignored), tap
 **SAVE**, then **TEST** on that row to confirm it fetches. See
 [docs/SOURCES.md](docs/SOURCES.md) for Google, iCloud, and local files.
 
+## Leaving the app
+
+Close it with the toolbar **QUIT** button (left of SETTINGS) or AppLoad's
+own top-edge close gesture — both exit cleanly.
+
+> **Known AppLoad quirk:** on some setups, after closing *any* external
+> AppLoad app, opening the next one shows a small displaced `> Window` bar
+> and never appears. This is an upstream rm-appload bug
+> ([#47](https://github.com/asivery/rm-appload/issues/47)), not specific to
+> this app (it reproduces with KOReader too). Fix it in seconds by
+> restarting xochitl over SSH — `systemctl restart xochitl` — instead of
+> rebooting. See [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
+
 ## Documentation
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — crate layout, QTFB
