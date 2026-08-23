@@ -45,14 +45,13 @@ it:**
   their combined rectangle — not one blocking socket round-trip per pen
   sample. That keeps the socket drained fast enough that QTFB does not
   overflow and drop the rest of a fast stroke.
-- On-screen updates are **throttled** while a stroke is in progress:
-  ink is always captured losslessly, but the display is refreshed at most
-  once every `pen_refresh_ms` (default 12 ms ≈ 80 Hz). This stops the app
+- On-screen updates are lightly **throttled** while a stroke is in
+  progress: ink is always captured losslessly, but the display is
+  refreshed at most once every few milliseconds. This stops the app
   flooding the QTFB host with more repaint requests than it can drain —
   which is what made a fast stroke stall for a moment and then "catch up"
-  in a burst. The interval is tunable live in **Settings → Display →
-  PEN** (0 ms publishes every cycle, the old behaviour). The last segment
-  of a stroke is always flushed immediately on pen-up.
+  in a burst. The last segment of a stroke is always flushed immediately
+  on pen-up.
 - Heavy full re-renders (a completed background refresh, the 15-minute
   auto-refresh, the startup repaints) are **deferred while the pen is
   down** and applied only between strokes, so a full-screen redraw can

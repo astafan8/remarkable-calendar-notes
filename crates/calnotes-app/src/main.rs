@@ -198,7 +198,7 @@ fn run_device() -> ExitCode {
 
 #[cfg(unix)]
 mod device_loop {
-    use super::app::{CANVAS_H, CANVAS_W};
+    use super::app::{CANVAS_H, CANVAS_W, TOOLBAR_ROW_H};
     use super::display::{self, FrameSink};
     use super::App;
     use calnotes_core::render::FrameBuffer;
@@ -224,6 +224,25 @@ mod device_loop {
     const TAP_MAX_DURATION: Duration = Duration::from_millis(700);
     const TAP_MOVE_THRESHOLD: i32 = 60;
 
+    /// Minimum time between on-screen updates while a stroke is in progress.
+    /// Ink is captured losslessly regardless; this only coalesces the screen
+    /// refresh so the display host is never handed more repaint requests
+    /// than it can drain (which used to make a fast stroke stall and then
+    /// "catch up"). A small fixed value keeps writing responsive.
+    const PEN_PUBLISH_THROTTLE: Duration = Duration::from_millis(4);
+
+    /// The AppLoad "close/leave" gesture is a one-finger flick that starts at
+    /// the very top edge and drags downwards. AppLoad recognises it
+    /// host-side (press above y=100, release between y=100 and y=400), but it
+    /// may leave this app *running in the background* rather than killing it —
+    /// in which case we keep the QTFB framebuffer bound and the NEXT AppLoad
+    /// app opens to a broken window. So we detect the same gesture and exit
+    /// cleanly ourselves, releasing the framebuffer and pen device. These are
+    /// the thresholds for "a finger swipe that began at the top and travelled
+    /// clearly downwards".
+    const APPLOAD_CLOSE_START_Y: i32 = 100;
+    const APPLOAD_CLOSE_DRAG_MIN: i32 = 150;
+
     /// In-progress finger contact, used for palm rejection (see the event
     /// loop). A tap is a single, brief, still contact with no pen activity.
     struct TouchTrack {
@@ -231,14 +250,20 @@ mod device_loop {
         start_y: i32,
         start: Instant,
         moved: bool,
+        /// A pen sample coincided with this contact — a palm resting while
+        /// the pen writes. Only rejects *writing-area* taps; a deliberate
+        /// finger tap on a toolbar button is still honoured.
         invalid: bool,
+        /// A second simultaneous contact was seen (a two-finger gesture or a
+        /// palm). Only used to reject *writing-area* taps, not button taps.
+        multi: bool,
         active_points: u32,
-        /// Whether the initial contact landed on interactive chrome (a
-        /// toolbar button or the settings screen). UI taps are now confirmed
-        /// on release, so a downward flick that begins on the top toolbar is
-        /// recognised as a swipe and passed through to AppLoad's
-        /// close-window gesture instead of firing a button.
-        ui: bool,
+        /// Whether the initial contact landed on the top view-button row —
+        /// the only place the AppLoad top-edge close flick can begin. Taps
+        /// here are confirmed on release (fire only if the finger did not
+        /// travel), so a downward flick is not mistaken for a button press.
+        /// Every other button fires immediately on press, exactly as before.
+        top_row: bool,
     }
 
     /// The device's real display sink: QTFB shared memory plus its update
@@ -422,36 +447,38 @@ mod device_loop {
                     for ev in events {
                         match ev.kind {
                             input_kind::TOUCH_PRESS => {
-                                // Every finger contact — including one that
-                                // lands on a toolbar button — is now
-                                // confirmed on release as a brief, still tap.
-                                // Firing buttons on press used to swallow the
-                                // AppLoad "flick down from the top edge to
-                                // close" gesture (its first touch lands on the
-                                // top view buttons), which both pressed a
-                                // button and left the app holding the
-                                // framebuffer so the next AppLoad app opened
-                                // to a broken window. A downward flick now
-                                // moves past the tap threshold and is ignored
-                                // by us, so AppLoad receives the whole gesture.
+                                // Buttons below the top view-button row fire
+                                // immediately on press, exactly as they always
+                                // did — instant and reliable. Only the top
+                                // view-button row (the one place the AppLoad
+                                // top-edge close flick can start) defers to
+                                // release, so a downward flick is recognised as
+                                // a swipe instead of pressing a view button.
                                 let hits_ui = app.touch_hits_ui(ev.x, ev.y);
-                                match touch.as_mut() {
-                                    None => {
-                                        touch = Some(TouchTrack {
-                                            start_x: ev.x,
-                                            start_y: ev.y,
-                                            start: Instant::now(),
-                                            moved: false,
-                                            invalid: pen_down,
-                                            active_points: 1,
-                                            ui: hits_ui,
-                                        });
-                                    }
-                                    // A second simultaneous contact means a
-                                    // palm, not a finger tap.
-                                    Some(track) => {
-                                        track.active_points += 1;
-                                        track.invalid = true;
+                                let top_row = ev.y < TOOLBAR_ROW_H;
+                                if hits_ui && !top_row {
+                                    app.handle_touch_tap(ev.x, ev.y);
+                                    needs_full_redraw = true;
+                                    touch = None;
+                                } else {
+                                    match touch.as_mut() {
+                                        None => {
+                                            touch = Some(TouchTrack {
+                                                start_x: ev.x,
+                                                start_y: ev.y,
+                                                start: Instant::now(),
+                                                moved: false,
+                                                invalid: pen_down,
+                                                multi: false,
+                                                active_points: 1,
+                                                top_row: hits_ui && top_row,
+                                            });
+                                        }
+                                        // A second simultaneous contact.
+                                        Some(track) => {
+                                            track.active_points += 1;
+                                            track.multi = true;
+                                        }
                                     }
                                 }
                             }
@@ -462,6 +489,20 @@ mod device_loop {
                                     {
                                         track.moved = true;
                                     }
+                                    // AppLoad top-edge close flick: a finger
+                                    // that began at the very top and has
+                                    // travelled clearly downwards. Exit
+                                    // cleanly so the framebuffer and pen
+                                    // device are released for the next app.
+                                    if track.start_y < APPLOAD_CLOSE_START_Y
+                                        && ev.y - track.start_y >= APPLOAD_CLOSE_DRAG_MIN
+                                    {
+                                        super::diagnostics::log(format_args!(
+                                            "AppLoad close flick detected (start_y={}, y={}); exiting cleanly",
+                                            track.start_y, ev.y
+                                        ));
+                                        return ExitCode::SUCCESS;
+                                    }
                                 }
                             }
                             input_kind::TOUCH_RELEASE => {
@@ -469,16 +510,33 @@ mod device_loop {
                                     track.active_points = track.active_points.saturating_sub(1);
                                     if track.active_points == 0 {
                                         let track = touch.take().unwrap();
-                                        // A UI tap only needs to be brief and
-                                        // still; a writing-area tap must also
-                                        // not coincide with pen use (palm
-                                        // rejection).
-                                        let brief_still = !track.moved
-                                            && track.start.elapsed() <= TAP_MAX_DURATION;
-                                        let is_tap = if track.ui {
-                                            brief_still && !track.invalid
+                                        // Same close-flick check on release, in
+                                        // case the downward travel only lands
+                                        // in the release event.
+                                        if track.start_y < APPLOAD_CLOSE_START_Y
+                                            && ev.y - track.start_y >= APPLOAD_CLOSE_DRAG_MIN
+                                        {
+                                            super::diagnostics::log(format_args!(
+                                                "AppLoad close flick on release (start_y={}, y={}); exiting cleanly",
+                                                track.start_y, ev.y
+                                            ));
+                                            return ExitCode::SUCCESS;
+                                        }
+                                        let brief = track.start.elapsed() <= TAP_MAX_DURATION;
+                                        let is_tap = if track.top_row {
+                                            // A top-row view-button tap only
+                                            // has to be brief and not travel —
+                                            // pen proximity or a fat two-point
+                                            // contact must not swallow it.
+                                            brief && !track.moved
                                         } else {
-                                            brief_still && !track.invalid && !pen_down
+                                            // Writing-area tap: full palm
+                                            // rejection.
+                                            brief
+                                                && !track.moved
+                                                && !track.invalid
+                                                && !track.multi
+                                                && !pen_down
                                         };
                                         if is_tap {
                                             app.handle_touch_tap(track.start_x, track.start_y);
@@ -615,12 +673,10 @@ mod device_loop {
                             });
                         }
                         // Publish immediately once the stroke ends; while it
-                        // is still going, throttle to pen_refresh_ms.
+                        // is still going, throttle to PEN_PUBLISH_THROTTLE.
                         let writing = pen_down || raw_writing;
-                        let interval =
-                            Duration::from_millis(app.state.config.pen_refresh_ms_clamped() as u64);
                         if let Some(rect) = pending_pen_dirty {
-                            if !writing || last_pen_publish.elapsed() >= interval {
+                            if !writing || last_pen_publish.elapsed() >= PEN_PUBLISH_THROTTLE {
                                 match display::publish_rect(sink, fb, rect) {
                                     Ok(_) => {}
                                     Err(e) => {

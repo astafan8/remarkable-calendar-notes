@@ -33,7 +33,7 @@ pub const CANVAS_H: i32 = calnotes_core::render::SCREEN_HEIGHT as i32;
 
 /// Height of each toolbar row (views, navigation, then ink tools),
 /// in canvas pixels.
-const TOOLBAR_ROW_H: i32 = 96;
+pub const TOOLBAR_ROW_H: i32 = 96;
 const TOOLBAR_H: i32 = TOOLBAR_ROW_H * 3;
 const MONTH_LABEL_W: i32 = 72;
 const UI_TEXT_SCALE: i32 = 4;
@@ -1600,28 +1600,8 @@ impl App {
             if within(rect, x, y) {
                 self.state.config.raw_pen_input = !self.state.config.raw_pen_input;
                 let _ = self.state.save_config();
-                return;
             }
         }
-        if let Some(rect) = layout.pen_refresh_minus_button {
-            if within(rect, x, y) {
-                self.adjust_pen_refresh_ms(-AppConfig::PEN_REFRESH_MS_STEP);
-                return;
-            }
-        }
-        if let Some(rect) = layout.pen_refresh_plus_button {
-            if within(rect, x, y) {
-                self.adjust_pen_refresh_ms(AppConfig::PEN_REFRESH_MS_STEP);
-            }
-        }
-    }
-
-    /// Nudge the pen-refresh throttle by `delta_ms`, clamped, and persist it.
-    fn adjust_pen_refresh_ms(&mut self, delta_ms: i32) {
-        let next = (self.state.config.pen_refresh_ms_clamped() + delta_ms)
-            .clamp(AppConfig::PEN_REFRESH_MS_MIN, AppConfig::PEN_REFRESH_MS_MAX);
-        self.state.config.pen_refresh_ms = next;
-        let _ = self.state.save_config();
     }
 
     /// Nudge the event text size by `delta_tenths` tenths of a point,
@@ -1824,9 +1804,6 @@ impl App {
         let mut event_plus_button = None;
         let mut event_size_row = None;
         let mut raw_pen_button = None;
-        let mut pen_refresh_minus_button = None;
-        let mut pen_refresh_row = None;
-        let mut pen_refresh_plus_button = None;
         let mut display_section_y = None;
         if self.editor.is_none() {
             let section_y = y + 112;
@@ -1878,25 +1855,6 @@ impl App {
                 w: 520,
                 h: 84,
             });
-            // Pen-refresh throttle stepper, mirroring the event-size stepper.
-            pen_refresh_minus_button = Some(view::Rect {
-                x: 700,
-                y: controls_y + 100,
-                w: 84,
-                h: 84,
-            });
-            pen_refresh_row = Some(view::Rect {
-                x: 792,
-                y: controls_y + 100,
-                w: 220,
-                h: 84,
-            });
-            pen_refresh_plus_button = Some(view::Rect {
-                x: 1020,
-                y: controls_y + 100,
-                w: 84,
-                h: 84,
-            });
         }
 
         SettingsLayout {
@@ -1917,9 +1875,6 @@ impl App {
             event_plus_button,
             event_size_row,
             raw_pen_button,
-            pen_refresh_minus_button,
-            pen_refresh_row,
-            pen_refresh_plus_button,
             display_section_y,
         }
     }
@@ -2013,23 +1968,6 @@ impl App {
                 Font::Ui,
             );
         }
-        if let Some(rect) = layout.pen_refresh_minus_button {
-            draw_button(fb, rect, "-", false, Font::Ui);
-        }
-        if let Some(rect) = layout.pen_refresh_plus_button {
-            draw_button(fb, rect, "+", false, Font::Ui);
-        }
-        if let Some(rect) = layout.pen_refresh_row {
-            fb.draw_rect_outline(rect, GRAY);
-            fb.draw_text(
-                rect.x + 12,
-                rect.y + 30,
-                &format!("PEN {}ms", self.state.config.pen_refresh_ms_clamped()),
-                BLACK,
-                BODY_TEXT_SCALE,
-                Font::Ui,
-            );
-        }
     }
 
     fn render_settings(&self, fb: &mut FrameBuffer) {
@@ -2076,7 +2014,7 @@ impl App {
 
         if self.editor.is_none() {
             let heading = if self.state.config.sources.len() >= 2 {
-                "Sources  (\u{2191}/\u{2193} reorder; order sets same-day event order)"
+                "Sources  (^/v reorder; order sets same-day event order)"
             } else {
                 "Sources"
             };
@@ -2092,14 +2030,14 @@ impl App {
             draw_button(
                 fb,
                 row.move_up,
-                if can_up { "\u{2191}" } else { "" },
+                if can_up { "^" } else { "" },
                 false,
                 Font::Ui,
             );
             draw_button(
                 fb,
                 row.move_down,
-                if can_down { "\u{2193}" } else { "" },
+                if can_down { "v" } else { "" },
                 false,
                 Font::Ui,
             );
@@ -2743,9 +2681,6 @@ struct SettingsLayout {
     event_plus_button: Option<view::Rect>,
     event_size_row: Option<view::Rect>,
     raw_pen_button: Option<view::Rect>,
-    pen_refresh_minus_button: Option<view::Rect>,
-    pen_refresh_row: Option<view::Rect>,
-    pen_refresh_plus_button: Option<view::Rect>,
     /// Top-left of the "Display" section, for the section's heading text.
     display_section_y: Option<i32>,
 }
