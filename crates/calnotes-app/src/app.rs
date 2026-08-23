@@ -68,6 +68,7 @@ pub enum Screen {
 /// Buttons on the second toolbar row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Action {
+    Quit,
     Settings,
     Prev,
     Today,
@@ -79,7 +80,13 @@ enum Action {
     ClearDay,
 }
 
-const NAV_ACTIONS: [Action; 4] = [Action::Settings, Action::Prev, Action::Today, Action::Next];
+const NAV_ACTIONS: [Action; 5] = [
+    Action::Quit,
+    Action::Settings,
+    Action::Prev,
+    Action::Today,
+    Action::Next,
+];
 
 const TOOL_ACTIONS: [Action; 5] = [
     Action::Pen,
@@ -92,6 +99,7 @@ const TOOL_ACTIONS: [Action; 5] = [
 impl Action {
     fn label(&self) -> &'static str {
         match self {
+            Action::Quit => "QUIT",
             Action::Settings => "SETTINGS",
             Action::Prev => "PREV",
             Action::Today => "TODAY",
@@ -241,6 +249,11 @@ pub struct App {
     /// was in — the anchor date is not necessarily where they were writing.
     /// Not persisted: undo history is per session.
     edit_history: Vec<NaiveDate>,
+    /// Set when the user taps the QUIT button. The device event loop reads
+    /// this and returns, so the app exits cleanly (QTFB is torn down and the
+    /// pen device released) — an explicit, reliable close in addition to
+    /// AppLoad's own close gesture.
+    pub quit_requested: bool,
 }
 
 impl App {
@@ -283,6 +296,7 @@ impl App {
             testing_source_id: None,
             google_login: None,
             edit_history: Vec::new(),
+            quit_requested: false,
         })
     }
 
@@ -1002,6 +1016,7 @@ impl App {
     }
     fn perform_action(&mut self, action: Action) {
         match action {
+            Action::Quit => self.quit_requested = true,
             Action::Settings => {
                 self.screen = Screen::Settings;
                 self.editor = None;
@@ -2302,10 +2317,12 @@ enum Icon {
     Next,
     Today,
     Settings,
+    Quit,
 }
 
 fn icon_for(action: Action) -> Icon {
     match action {
+        Action::Quit => Icon::Quit,
         Action::Settings => Icon::Settings,
         Action::Prev => Icon::Prev,
         Action::Today => Icon::Today,
@@ -2465,10 +2482,51 @@ fn draw_icon(fb: &mut FrameBuffer, area: view::Rect, icon: Icon) {
                 );
             }
         }
+        Icon::Quit => {
+            // A door frame on the left with an arrow leaving through it to
+            // the right — a small "exit" glyph.
+            let door = view::Rect {
+                x: area.x + 4,
+                y: cy - r,
+                w: (area.w * 2 / 5).max(8),
+                h: 2 * r,
+            };
+            fb.draw_rect_outline(door, BLACK);
+            // Door knob.
+            fb.fill_rect(
+                view::Rect {
+                    x: door.x + door.w - 6,
+                    y: cy - 2,
+                    w: 4,
+                    h: 4,
+                },
+                BLACK,
+            );
+            // Arrow shaft leaving through the doorway.
+            let shaft_x0 = door.x + door.w - 2;
+            fb.fill_rect(
+                view::Rect {
+                    x: shaft_x0,
+                    y: cy - 1,
+                    w: (area.x + area.w - 6 - shaft_x0 - 6).max(4),
+                    h: 3,
+                },
+                BLACK,
+            );
+            // Arrowhead pointing right (out of the door).
+            fill_triangle(
+                fb,
+                view::Rect {
+                    x: area.x + area.w - 16,
+                    y: cy - r / 2,
+                    w: 12,
+                    h: r,
+                },
+                true,
+            );
+        }
     }
 }
-
-/// A toolbar button with a leading line-art icon and a label to its right.
 fn draw_icon_button(fb: &mut FrameBuffer, rect: view::Rect, icon: Icon, label: &str, active: bool) {
     fb.draw_rect_outline(rect, BLACK);
     if active {
@@ -3065,14 +3123,37 @@ mod tests {
         with_temp_data_dir(|| {
             let mut app = App::new().unwrap();
             let start = app.state.config.anchor_date;
-            let (next_action, next_button) = app.action_buttons()[3];
-            assert_eq!(next_action, Action::Next);
+            let (_, next_button) = app
+                .action_buttons()
+                .into_iter()
+                .find(|(a, _)| *a == Action::Next)
+                .unwrap();
             app.handle_touch_tap(next_button.x + 5, next_button.y + 5);
             assert!(app.state.config.anchor_date > start);
 
-            let (_, settings_button) = app.action_buttons()[0]; // Action::Settings
+            let (_, settings_button) = app
+                .action_buttons()
+                .into_iter()
+                .find(|(a, _)| *a == Action::Settings)
+                .unwrap();
             app.handle_touch_tap(settings_button.x + 5, settings_button.y + 5);
             assert_eq!(app.screen, Screen::Settings);
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn quit_button_sets_the_quit_flag() {
+        with_temp_data_dir(|| {
+            let mut app = App::new().unwrap();
+            assert!(!app.quit_requested);
+            let (_, quit_button) = app
+                .action_buttons()
+                .into_iter()
+                .find(|(a, _)| *a == Action::Quit)
+                .unwrap();
+            app.handle_touch_tap(quit_button.x + 5, quit_button.y + 5);
+            assert!(app.quit_requested);
         });
     }
 
@@ -3635,8 +3716,11 @@ mod tests {
             let today = app.today();
             app.navigate(5);
             assert_ne!(app.state.config.anchor_date, today);
-            let (action, rect) = app.action_buttons()[2];
-            assert_eq!(action, Action::Today);
+            let (_, rect) = app
+                .action_buttons()
+                .into_iter()
+                .find(|(a, _)| *a == Action::Today)
+                .unwrap();
             app.handle_touch_tap(rect.x + 5, rect.y + 5);
             assert_eq!(app.state.config.anchor_date, today);
         });

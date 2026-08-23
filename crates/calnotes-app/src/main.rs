@@ -231,18 +231,6 @@ mod device_loop {
     /// "catch up"). A small fixed value keeps writing responsive.
     const PEN_PUBLISH_THROTTLE: Duration = Duration::from_millis(4);
 
-    /// The AppLoad "close/leave" gesture is a one-finger flick that starts at
-    /// the very top edge and drags downwards. AppLoad recognises it
-    /// host-side (press above y=100, release between y=100 and y=400), but it
-    /// may leave this app *running in the background* rather than killing it —
-    /// in which case we keep the QTFB framebuffer bound and the NEXT AppLoad
-    /// app opens to a broken window. So we detect the same gesture and exit
-    /// cleanly ourselves, releasing the framebuffer and pen device. These are
-    /// the thresholds for "a finger swipe that began at the top and travelled
-    /// clearly downwards".
-    const APPLOAD_CLOSE_START_Y: i32 = 100;
-    const APPLOAD_CLOSE_DRAG_MIN: i32 = 150;
-
     /// In-progress finger contact, used for palm rejection (see the event
     /// loop). A tap is a single, brief, still contact with no pen activity.
     struct TouchTrack {
@@ -489,20 +477,6 @@ mod device_loop {
                                     {
                                         track.moved = true;
                                     }
-                                    // AppLoad top-edge close flick: a finger
-                                    // that began at the very top and has
-                                    // travelled clearly downwards. Exit
-                                    // cleanly so the framebuffer and pen
-                                    // device are released for the next app.
-                                    if track.start_y < APPLOAD_CLOSE_START_Y
-                                        && ev.y - track.start_y >= APPLOAD_CLOSE_DRAG_MIN
-                                    {
-                                        super::diagnostics::log(format_args!(
-                                            "AppLoad close flick detected (start_y={}, y={}); exiting cleanly",
-                                            track.start_y, ev.y
-                                        ));
-                                        return ExitCode::SUCCESS;
-                                    }
                                 }
                             }
                             input_kind::TOUCH_RELEASE => {
@@ -510,18 +484,6 @@ mod device_loop {
                                     track.active_points = track.active_points.saturating_sub(1);
                                     if track.active_points == 0 {
                                         let track = touch.take().unwrap();
-                                        // Same close-flick check on release, in
-                                        // case the downward travel only lands
-                                        // in the release event.
-                                        if track.start_y < APPLOAD_CLOSE_START_Y
-                                            && ev.y - track.start_y >= APPLOAD_CLOSE_DRAG_MIN
-                                        {
-                                            super::diagnostics::log(format_args!(
-                                                "AppLoad close flick on release (start_y={}, y={}); exiting cleanly",
-                                                track.start_y, ev.y
-                                            ));
-                                            return ExitCode::SUCCESS;
-                                        }
                                         let brief = track.start.elapsed() <= TAP_MAX_DURATION;
                                         let is_tap = if track.top_row {
                                             // A top-row view-button tap only
@@ -701,6 +663,16 @@ mod device_loop {
                     super::diagnostics::log(format_args!("QTFB host closed the socket"));
                     return ExitCode::SUCCESS;
                 }
+            }
+
+            // The QUIT button gives the user an explicit, reliable way to
+            // close the app (in addition to AppLoad's own close gesture).
+            // Returning here drops the QtfbClient, which sends TERMINATE and
+            // munmaps/closes the socket, and the process exits — releasing
+            // the framebuffer and the pen device for the next AppLoad app.
+            if app.quit_requested {
+                super::diagnostics::log(format_args!("quit requested; exiting cleanly"));
+                return ExitCode::SUCCESS;
             }
 
             // While a stroke is in progress, defer every heavy full-redraw
