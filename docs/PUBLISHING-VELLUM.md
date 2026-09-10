@@ -14,6 +14,18 @@ Two important facts up front:
 - Everything below is already scripted in this repo. You mainly run two
   scripts and open one PR.
 
+> **⚠️ Vellum requires the PR to be opened *by a person*, not an agent.**
+> Vellum's `README` states: *"Pull requests and issues must be opened by a
+> person, not by an agent acting on its own. If a pull request description
+> is written by an LLM, we will assume that the pull request was opened by
+> an agent, and it will be closed."* It also requires that *"commits must be
+> authored and co-authored by people"* — **do not** add
+> `Co-Authored-By:` trailers naming an assistant/bot, and do not commit from
+> a bot account. So: **you** write the PR description in your own words, and
+> the fork commit is authored as **you** (the `publish-vellum-testing.sh`
+> commit deliberately adds no agent trailers). This is the one part that
+> must not be automated.
+
 The repo already ships two ready recipes under `vellum/packages/`:
 `remarkable-calendar-notes` (the app) and
 `remarkable-calendar-notes-sidebar` (the optional xochitl sidebar icon).
@@ -93,9 +105,13 @@ The script:
 ## Step 4 — Open the PR to `vellum-dev/vellum`
 
 Open the compare link the script prints (or use `gh pr create` from the
-fork), describe the app briefly, and submit. A Vellum maintainer reviews
-it. When they merge and publish it to the **testing** channel, it becomes
-installable.
+fork) and submit. **Write the description yourself, in your own words** —
+per Vellum's rules an LLM-written description gets the PR auto-closed (see
+the warning at the top). Keep it factual: what the app is (a read-only
+calendar with per-day handwritten notes for reMarkable 2, via AppLoad),
+that it's armv7/RM2-only, and that the optional `-sidebar` package adds an
+xochitl sidebar icon on OS 3.27. A Vellum maintainer reviews it; when they
+merge and publish it to the **testing** channel, it becomes installable.
 
 ## Step 5 — Install on the device (reManager or CLI)
 
